@@ -184,11 +184,36 @@ pgrep -a -x yes || true
 
 **Contexto: VM do posto · 30 min · reposição às 10:35.**
 
-1. Confirma o serviço e cria conteúdo identificável:
+### Antes de começar: Nginx e parâmetros
+
+Executa os comandos na **VM Ubuntu**, tanto no posto do formador como no dos formandos. Carrega a ficha nesta sessão; mudar para a pasta `adm-srv/formador` não carrega as variáveis:
 
 ```bash
-nginx -v
-systemctl is-active nginx
+source "$HOME/parametros-posto.sh"
+validar_parametros
+```
+
+Se a ficha não existir ou a validação falhar, conclui a [preparação comum](../AMBIENTE_COMUM.md) antes de continuar. Confirma depois o Nginx no Ubuntu; este bloco instala-o se estiver em falta e termina na primeira falha:
+
+```bash
+(
+    set -euo pipefail
+    if ! sudo nginx -v >/dev/null 2>&1; then
+        sudo apt-get update
+        sudo apt-get install -y nginx
+    fi
+    sudo nginx -v
+    sudo nginx -t
+    sudo systemctl enable --now nginx
+    systemctl is-active nginx
+)
+```
+
+**Esperado:** versão do Nginx, configuração válida e serviço `active`. Se algum comando falhar, resolve essa falha antes do passo 1. Estes comandos destinam-se à VM Ubuntu.
+
+### 1. Criar conteúdo identificável
+
+```bash
 sudo install -d -o root -g root -m 0755 "$WEB_ROOT"
 sudo nano "$WEB_ROOT/index.html"
 ```
@@ -217,7 +242,7 @@ Guarda e fecha o editor. Aplica as permissões no terminal:
 sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
 ```
 
-2. Cria a configuração de trabalho:
+### 2. Criar a configuração de trabalho
 
 ```bash
 CONF_TRABALHO="$HOME/site-${POSTO}.conf"
@@ -240,19 +265,62 @@ server {
 
 Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
 
-3. Guarda a configuração anterior, se existir, e aplica só com validação:
+### 3. Confirmar os ficheiros e aplicar com validação
+
+O bloco volta a carregar a ficha e define `CONF_TRABALHO`, para funcionar também numa nova sessão. Se o ficheiro de trabalho estiver em falta, volta ao passo 2. Se faltarem os ficheiros do site, completa o passo 1. Nenhuma configuração é instalada antes destas verificações.
 
 ```bash
-if sudo test -e "$NGINX_INCLUDE"; then
-    sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t3-$(date +%Y%m%d%H%M%S)"
-fi
-sudo install -o root -g root -m 0644 "$CONF_TRABALHO" "$NGINX_INCLUDE"
-sudo nginx -t && sudo systemctl reload nginx
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    CONF_TRABALHO="$HOME/site-${POSTO}.conf"
+
+    sudo nginx -v
+    if [[ ! -s "$CONF_TRABALHO" ]]; then
+        printf 'Falta o ficheiro de trabalho: %s. Completa o passo 2 de T3.\n' "$CONF_TRABALHO" >&2
+        exit 1
+    fi
+    if grep -nE '@[A-Z0-9_]+@' "$CONF_TRABALHO"; then
+        echo 'Preenche os marcadores do ficheiro de trabalho antes de o instalar.' >&2
+        exit 1
+    fi
+    for ficheiro in "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"; do
+        if ! sudo test -s "$ficheiro"; then
+            printf 'Falta conteúdo no ficheiro: %s. Completa o passo 1 de T3.\n' "$ficheiro" >&2
+            exit 1
+        fi
+    done
+
+    printf 'Origem: %s\nDestino: %s\n' "$CONF_TRABALHO" "$NGINX_INCLUDE"
+    sudo install -d -o root -g root -m 0755 "$(dirname -- "$NGINX_INCLUDE")"
+    BACKUP=""
+    if sudo test -e "$NGINX_INCLUDE"; then
+        BACKUP="${NGINX_INCLUDE}.antes-t3-$(date +%Y%m%d%H%M%S)"
+        sudo cp -a "$NGINX_INCLUDE" "$BACKUP"
+    fi
+    sudo install -o root -g root -m 0644 "$CONF_TRABALHO" "$NGINX_INCLUDE"
+    if ! sudo nginx -t; then
+        REJEITADO="${NGINX_INCLUDE}.rejeitado-$(date +%Y%m%d%H%M%S)"
+        sudo mv -- "$NGINX_INCLUDE" "$REJEITADO"
+        if [[ -n "$BACKUP" ]]; then
+            sudo cp -a "$BACKUP" "$NGINX_INCLUDE"
+        fi
+        printf 'Configuração recusada, guardada em %s. Corrige o ficheiro de trabalho e repete este passo.\n' "$REJEITADO" >&2
+        exit 1
+    fi
+    sudo systemctl enable --now nginx
+    sudo systemctl reload nginx
+)
 ```
 
-4. Verifica com nome e destino explícitos:
+Se `nginx -t` falhar, a configuração proposta fica guardada com o sufixo `.rejeitado-*` e a configuração anterior é reposta, quando existia. O serviço só recebe o reload depois de uma validação bem-sucedida.
+
+### 4. Verificar com nome e destino explícitos
 
 ```bash
+source "$HOME/parametros-posto.sh"
+validar_parametros
 teste_http
 curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
     --resolve "${NOME_SITE}:${PORTA_HTTP}:${IP_VM}" \
