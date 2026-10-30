@@ -20,9 +20,9 @@ CORES=4
 RAM=8192
 DISCO=64
 ESPERA=1800
-LAB_REF=8ebce3b45c866382669d0737044435febb42a4d3
+LAB_REF=6763643a5c45d577f4b3e1352ad20e4e5e150546
 # Atualizado na publicação do ambiente comum; marcador de versão para a migração.
-REF_COMUM=8ebce3b45c866382669d0737044435febb42a4d3
+REF_COMUM=6763643a5c45d577f4b3e1352ad20e4e5e150546
 POSTO=formador
 IP_ZABBIX=
 CA_ORIGEM=/root/laboratorio/segredos/ca-lab.crt
