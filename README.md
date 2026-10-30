@@ -2,7 +2,7 @@
 
 **Documento do formando · Módulos M4–M8 · Duração: 8 horas**
 
-Nesta sessão vais publicar um serviço web com HTTPS, proteger os seus dados, automatizar backups e usar monitorização e logs para resolver um incidente. O trabalho continua a aplicação Docker Compose com volume persistente de M3, identificada neste enunciado como **CP4**.
+Nesta sessão vais publicar um serviço web com HTTPS, proteger os seus dados, automatizar backups e usar monitorização e logs para resolver um incidente. **CP4** é a aplicação HTTP didática que serve de base ao trabalho: um serviço executado com Docker Compose e dados guardados num volume persistente. Nas VMs novas, prepara essa aplicação seguindo o [guia de criação e verificação da CP4](PREPARAR_CP4.md) antes de iniciar T0.
 
 Realiza as tarefas **T0–T17** na ordem indicada. Para cada tarefa, responde às questões, recolhe as evidências pedidas e mostra o resultado ao formador. A avaliação desta sessão é **formativa, sem nota**.
 
@@ -75,11 +75,13 @@ As credenciais e o valor da PSK são entregues pelo canal indicado pelo formador
 **M4 · 15 minutos**
 
 1. Entra na VM por SSH. Identifica o hostname, o utilizador, a versão do sistema e o tempo desde o arranque.
-2. Verifica os projetos Docker Compose e os contentores em execução. Qual é o contentor que serve a aplicação CP4?
-3. Testa o endpoint CP4 a partir da própria VM. Que código HTTP obténs?
-4. Se a aplicação não responder como esperado, apresenta o sintoma ao formador.
+2. Identifica a origem da CP4: criada por ti nesta VM, retomada ou fornecida pelo formador. Se estiver em falta, usa o [guia de preparação da CP4](PREPARAR_CP4.md) com o apoio do formador antes de continuar.
+3. Verifica o projeto Docker Compose, o serviço e o contentor da CP4. Identifica o volume persistente e a sua montagem.
+4. Testa o endpoint CP4 a partir da própria VM. Que código HTTP e que conteúdo obténs?
+5. Regista a prova de persistência feita na preparação: o que aconteceu aos dados depois de substituir o contentor? Se usares uma referência fornecida, identifica essa origem e o que verificaste pessoalmente.
+6. Se a aplicação não responder como esperado, conserva o erro e apresenta-o ao formador. Usa o procedimento de recuperação do guia sem remover o volume.
 
-**Evidência e critério de sucesso:** identidade da VM, contentor identificado e resposta HTTP esperada da aplicação. **Reposição: 08:45.**
+**Evidência e critério de sucesso:** identidade da VM, origem da CP4, projeto/contentor/volume identificados e resposta HTTP esperada. **Reposição: 08:45.**
 
 ## T1 — Decisão de proteção e restauro de uma amostra
 
