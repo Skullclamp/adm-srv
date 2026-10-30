@@ -11,11 +11,14 @@ Esta pasta reúne a resolução da sessão prática M4–M8, incluindo a prepara
 | [GUIA_RESOLUCAO.md](GUIA_RESOLUCAO.md) | Resolução passo a passo de T0–T17, resultados esperados, respostas, falhas e recuperação |
 | [parametros.exemplo.sh](parametros.exemplo.sh) | Modelo sem valores da infraestrutura, para preencher numa cópia local |
 | [docker-lab/](docker-lab/) | Stack Docker do formador: CP4, Nginx/HTTPS, Restic, Zabbix e falhas reversíveis |
+| [proxmox/](proxmox/) | Criar uma VM Ubuntu 26.04 no Proxmox e montar automaticamente a stack Docker |
 | [.gitignore](.gitignore) | Evita adicionar por engano parâmetros privados, chaves e evidências nesta pasta |
 
 ## Como utilizar
 
 Para montar uma demonstração Docker automaticamente, segue o [guia da stack do formador](docker-lab/README.md). Esta opção é independente das VMs nativas e adapta o agendamento e os logs ao contexto dos contentores.
+
+Se ainda não tens uma VM para essa stack, usa o [script de criação no Proxmox](proxmox/README.md). Cria uma VM Ubuntu 26.04 e faz a preparação Docker dentro dela.
 
 1. Lê o [enunciado dos formandos](../README.md), a [preparação CP4](../PREPARAR_CP4.md) e a [folha de respostas](../FOLHA_DE_RESPOSTAS.md).
 2. Copia `parametros.exemplo.sh` para `~/parametros-posto.sh` na máquina onde vais executar os comandos. Preenche os valores da ficha privada do posto.

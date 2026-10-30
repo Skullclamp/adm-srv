@@ -4,6 +4,8 @@ O comando `subir` prepara uma demonstração funcional de CP4, Nginx, HTTPS, bac
 
 Executar **numa VM Ubuntu com Docker Engine e Docker Compose v2**. O PowerShell do Windows serve para abrir a ligação SSH e o túnel para o browser. Esta stack não cria VMs no Proxmox.
 
+Para criar também a VM e instalar os pré-requisitos automaticamente, usa o [script para o Proxmox](../proxmox/README.md), que prepara uma VM Ubuntu 26.04 LTS e arranca esta stack.
+
 ## 1. Arrancar na VM Ubuntu
 
 Pré-requisitos: `docker`, `docker compose`, `openssl`, `flock` e `git`. Se faltar Docker, segue a [instalação oficial para Ubuntu](https://docs.docker.com/engine/install/ubuntu/); o script verifica as dependências antes de preparar o laboratório.
