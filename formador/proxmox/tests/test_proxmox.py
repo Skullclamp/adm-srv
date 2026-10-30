@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'criar-vm-formador.sh'
@@ -150,6 +151,93 @@ guest 1 'comando-simulado'
 ''')
         self.assertEqual(result.returncode, 7)
         self.assertIn('erro simulado', result.stderr)
+
+
+class LockTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.bash = os.environ.get('BASH_FOR_TESTS') or shutil.which('bash')
+        if not cls.bash:
+            raise unittest.SkipTest('É necessário Bash para estes testes.')
+
+    shell = ProxmoxTests.shell
+
+    def test_supervisor_closes_lock_before_executing_commands(self):
+        for function, filename in (('com_bloqueio', 'controlo-v2.lock'),
+                                   ('com_bloqueio_antigo', 'controlo.lock')):
+            with self.subTest(function=function):
+                result = self.shell('''
+flock() {
+    [[ "$1 $2 $3 $4" == '--nonblock --conflict-exit-code 200 --close' ]] || return 99
+    printf 'BLOQUEIO=%s\n' "$5"
+    [[ "$6 $7" == '/bin/bash -c' ]] || return 98
+    [[ "$8" == *'source "$1"; shift;'* ]] || return 97
+}
+''' + function + ' diagnostico')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('BLOQUEIO=/root/adm-srv-formador-vm/' + filename, result.stdout)
+
+    def test_concurrent_new_operation_is_rejected_without_entering_old_lock(self):
+        result = self.shell('''
+flock() { return 200; }
+com_bloqueio_antigo() { printf OPERACAO_INDEVIDA; }
+com_bloqueio alinhar
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Outro comando', result.stderr)
+        self.assertNotIn('OPERACAO_INDEVIDA', result.stdout)
+
+    def test_old_lock_active_operation_prevents_vm_commands(self):
+        result = self.shell('''
+flock() { return 200; }
+verificar_bloqueio_herdado() { printf 'instalador antigo ativo\n' >&2; return 1; }
+main_bloqueado() { printf OPERACAO_INDEVIDA; }
+com_bloqueio_antigo alinhar
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('OPERACAO_INDEVIDA', result.stdout)
+
+    def test_qemu_only_old_lock_can_continue(self):
+        result = self.shell('''
+flock() { return 200; }
+verificar_bloqueio_herdado() { printf 'apenas QEMU\n'; }
+main_bloqueado() { printf 'CONTINUOU %s\n' "$*"; }
+com_bloqueio_antigo alinhar --espera 2400
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('CONTINUOU alinhar --espera 2400', result.stdout)
+
+    def test_holder_validator_rejects_installer_even_alongside_qemu(self):
+        code = re.search(r"<<'PY_LOCK'\n(.*?)\nPY_LOCK", SOURCE, re.S).group(1)
+        namespace = {'__name__': 'lock_tests'}
+        exec(compile(code, '<lock-check>', 'exec'), namespace)
+        validate = namespace['validar']
+        validate([(1010417, 'kvm')])
+        validate([(1010417, 'qemu-system-x86_64')])
+        for holders in ([], [(1, 'bash')], [(1, 'kvm'), (2, 'bash')], [(1, 'desconhecido')]):
+            with self.subTest(holders=holders):
+                with self.assertRaises(RuntimeError):
+                    validate(holders)
+
+    def test_proc_scan_matches_inode_and_checks_executable(self):
+        code = re.search(r"<<'PY_LOCK'\n(.*?)\nPY_LOCK", SOURCE, re.S).group(1)
+        namespace = {'__name__': 'lock_tests'}
+        exec(compile(code, '<lock-check>', 'exec'), namespace)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as task_dir:
+            temporary = Path(task_dir).resolve()
+            lock = temporary / 'controlo.lock'
+            lock.touch()
+            proc = temporary / 'proc'
+            for pid in ('100', '200', '300'):
+                (proc / pid / 'fd').mkdir(parents=True)
+            os.link(lock, proc / '100/fd/9')
+            os.link(lock, proc / '200/fd/9')
+            (proc / '300/fd/9').touch()  # Mesmo nome, outro inode: não é titular.
+            with patch('os.readlink', side_effect=lambda p: '/usr/bin/kvm' if p.parent.name == '100' else '/usr/bin/bash'):
+                holders = namespace['titulares'](lock, proc)
+            self.assertEqual(sorted(holders), [(100, 'kvm'), (200, 'bash')])
+            with self.assertRaises(RuntimeError):
+                namespace['validar'](holders)
 
 
 class CloudInitTests(unittest.TestCase):

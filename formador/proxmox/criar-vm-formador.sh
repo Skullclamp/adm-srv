@@ -97,8 +97,74 @@ dependencias() {
     [[ $(uname -m) == x86_64 ]] || erro 'Esta imagem é para um anfitrião x86_64.'
     [[ ! -L "$STATE_DIR" ]] || erro 'A pasta de estado não pode ser uma ligação simbólica.'
     install -d -m 0700 "$STATE_DIR"
-    exec 9>"$STATE_DIR/controlo.lock"
-    flock -n 9 || erro 'Outro comando deste script está em execução.'
+    [[ ! -L "$STATE_DIR/controlo.lock" && ! -L "$STATE_DIR/controlo-v2.lock" ]] || erro 'O bloqueio não pode ser uma ligação simbólica.'
+}
+
+verificar_bloqueio_herdado() {
+    python3 - "$STATE_DIR/controlo.lock" <<'PY_LOCK'
+import os
+from pathlib import Path
+import sys
+
+def titulares(lock_path, proc_root=Path('/proc')):
+    target = os.stat(lock_path)
+    found = []
+    for process in proc_root.iterdir():
+        if not process.name.isdecimal():
+            continue
+        try:
+            for descriptor in (process / 'fd').iterdir():
+                try:
+                    opened = descriptor.stat()
+                except FileNotFoundError:
+                    continue
+                if (opened.st_dev, opened.st_ino) == (target.st_dev, target.st_ino):
+                    executable = Path(os.readlink(process / 'exe')).name
+                    found.append((int(process.name), executable))
+                    break
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return found
+
+def validar(found):
+    # O nome do executável é verificado, não apenas o nome visível do processo.
+    qemu = {'kvm', 'qemu-system-x86_64'}
+    if not found or any(executable not in qemu for _, executable in found):
+        details = ', '.join(f'{pid} ({exe})' for pid, exe in found) or 'titular não identificado'
+        raise RuntimeError('O bloqueio antigo ainda tem uma operação ativa ou desconhecida: ' + details)
+
+if __name__ == '__main__':
+    try:
+        found = titulares(sys.argv[1])
+        validar(found)
+    except (OSError, RuntimeError) as exc:
+        raise SystemExit('ERRO: ' + str(exc) + '. Nenhum processo foi terminado; voltar a tentar depois de concluir a operação.')
+    print('Bloqueio antigo herdado apenas pelo QEMU; a VM continua em execução. A usar o bloqueio corrigido.')
+PY_LOCK
+}
+
+com_bloqueio_antigo() {
+    local codigo=0
+    # Quando está livre, também protegemos contra uma execução da versão antiga.
+    flock --nonblock --conflict-exit-code 200 --close "$STATE_DIR/controlo.lock" \
+        /bin/bash -c 'source "$1"; shift; main_bloqueado "$@"' "$0" "${BASH_SOURCE[0]}" "$@" || codigo=$?
+    if [[ $codigo -eq 200 ]]; then
+        verificar_bloqueio_herdado
+        main_bloqueado "$@"
+    else
+        return "$codigo"
+    fi
+}
+
+com_bloqueio() {
+    local codigo=0
+    # flock mantém o bloqueio no processo supervisor. --close impede que qm/kvm
+    # recebam o descritor e conservem o bloqueio depois de o script terminar.
+    # O ficheiro antigo não é apagado nem desbloqueado à força.
+    flock --nonblock --conflict-exit-code 200 --close "$STATE_DIR/controlo-v2.lock" \
+        /bin/bash -c 'source "$1"; shift; com_bloqueio_antigo "$@"' "$0" "${BASH_SOURCE[0]}" "$@" || codigo=$?
+    [[ $codigo -ne 200 ]] || erro 'Outro comando deste script está em execução.'
+    return "$codigo"
 }
 
 guardar_estado() {
@@ -470,7 +536,7 @@ alinhar_vm() {
     [[ $(qm status "$VMID") == 'status: running' ]] || qm start "$VMID"
     disco_backup_vm
     aguardar_agente
-    guest 120 'systemctl stop adm-srv-formador.service'
+    guest 120 'set -e; systemctl stop adm-srv-formador.service; if test -f /var/lib/adm-srv-formador/pronto; then cp -a /var/lib/adm-srv-formador/pronto /var/lib/adm-srv-formador/pronto-anterior; fi'
     enviar_preparacao
     touch "$STATE_DIR/preparacao-comum"
     guest 20 'set -e; systemctl daemon-reload; systemctl reset-failed adm-srv-formador.service; install -d -m 0700 /var/lib/adm-srv-formador; rm -f /var/lib/adm-srv-formador/pronto; printf "a-alinhar\n" > /var/lib/adm-srv-formador/estado; systemctl restart --no-block adm-srv-formador.service'
@@ -535,13 +601,12 @@ acessos() {
     guest 20 'source /home/ubuntu/parametros-posto.sh; printf "\nCP4: ~/cp4/compose.yaml | projeto cp4 | serviço app | volume cp4_dados\nAmostra T1: %s\nSite do posto: %s\nZabbix da sala: %s\nNa shell Ubuntu: source ~/parametros-posto.sh\n" "$AMOSTRA_ORIGEM" "$NOME_SITE" "$URL_ZABBIX"'
 }
 
-main() {
+main_bloqueado() {
     case "${1:-}" in ajuda|help|-h|--help) ajuda; return 0 ;; esac
     argumentos "$@"
     case "$COMANDO" in criar|estado|acessos|diagnostico|alinhar|retomar|verificar) ;; *) erro 'Comando desconhecido. Consultar ajuda.' ;; esac
     trap 'printf "Operação interrompida na linha %s; VM, discos e estado foram conservados.\n" "$LINENO" >&2' ERR
     umask 077
-    dependencias
     if [[ -f "$STATE_FILE" ]]; then
         carregar_estado
     else
@@ -599,6 +664,13 @@ main() {
             ;;
         verificar) guest 600 'bash /home/ubuntu/adm-srv/preparar-posto.sh verificar' ;;
     esac
+}
+
+main() {
+    case "${1:-}" in ajuda|help|-h|--help) ajuda; return 0 ;; esac
+    umask 077
+    dependencias
+    com_bloqueio "$@"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi

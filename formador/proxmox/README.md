@@ -118,6 +118,8 @@ CP4 fica disponível em http://localhost:8000. O site Nginx é trabalhado a part
 
 ## 6. Diagnóstico e repetição
 
+Se uma versão anterior disser `Outro comando deste script está em execução` e `fuser -v /root/adm-srv-formador-vm/controlo.lock` mostrar apenas `kvm`, atualiza o script com o comando da secção 1 e repete `alinhar`. A versão corrigida reconhece o descritor herdado pelo QEMU e usa `controlo-v2.lock`, sem apagar o bloqueio antigo nem terminar a VM. Se identificar também um instalador ou outro processo, interrompe para evitar operações simultâneas. O novo bloqueio fica num supervisor `flock --close`, impedindo a herança por `qm`/QEMU.
+
 No Proxmox:
 
 ```bash
