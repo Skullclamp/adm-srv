@@ -95,6 +95,12 @@ sudo bash "$HOME/adm-srv/preparar-posto.sh" verificar
 
 Esta verificação confirma os pré-requisitos, CP4, amostra, CA, agente e disco. A monitorização central e o HTTPS do site são confirmados nas tarefas respetivas.
 
+## Antes de publicar o site em T3
+
+O Nginx tem de estar instalado e ativo no Ubuntu da VM. A secção [T3 do guia](formador/GUIA_RESOLUCAO.md#t3--publicar-o-site-nginx) inclui agora a verificação e instalação do pacote, o carregamento da ficha e a confirmação de `site-$POSTO.conf` antes de aplicar a configuração. O mesmo procedimento serve para formador e formandos.
+
+Se aparecer `nginx: command not found`, conclui esse pré-requisito. Se faltar `parametros-posto.sh`, conclui a preparação comum. Se faltar o ficheiro de trabalho, completa o passo 2 de T3. A aplicação da configuração termina antes de alterar o destino quando faltam esses elementos.
+
 ## Validação da publicação
 
 Foram executados testes de sintaxe Bash, igualdade entre o Compose do guia dos formandos e o ficheiro instalado, geração dos caminhos para p1/p2/formador, conservação de dados na migração e configuração Proxmox simulada. Não foi executada uma migração real nem uma criação de VM neste ambiente de preparação.
