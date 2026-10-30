@@ -1,0 +1,14 @@
+# As cópias preenchidas devem ficar preferencialmente fora do repositório.
+parametros.sh
+parametros-posto.sh
+parametros-privados*.sh
+segredos/
+evidencias/
+*.key
+*.psk
+*.pem
+*.p12
+*.pfx
+*.crt
+*.csr
+*.log
