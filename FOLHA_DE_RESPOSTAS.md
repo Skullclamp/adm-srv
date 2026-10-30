@@ -14,8 +14,11 @@ Regista comandos ou consultas utilizados, resultados relevantes e explicações.
 |---|---|
 | Hostname, utilizador e versão do sistema | |
 | Tempo desde o arranque | |
-| Projeto / contentor CP4 | |
-| Endpoint, código HTTP e hora do teste | |
+| Origem da CP4: criada nesta VM / retomada / referência fornecida | |
+| Pasta Compose / projeto / serviço / contentor CP4 | |
+| Volume persistente / destino no contentor / caminho confirmado para backup | |
+| Endpoint, código HTTP, conteúdo e hora do teste | |
+| Prova de persistência: IDs antes/depois e conteúdo preservado, se realizada | |
 | Apoio ou reposição recebida | |
 
 ## T1 — Proteção e restauro amostral
@@ -225,7 +228,7 @@ Regista comandos ou consultas utilizados, resultados relevantes e explicações.
 
 | Tarefa | Evidência principal | Concluída | Validada pelo formador |
 |---|---|:---:|:---:|
-| T0 | VM / CP4 identificados e HTTP esperado | ☐ | ☐ |
+| T0 | Origem / projeto / volume CP4 identificados e HTTP esperado | ☐ | ☐ |
 | T1 | Decisão RPO/RTO e hashes após restauro | ☐ | ☐ |
 | T2 | Baseline / carga e dois limiares | ☐ | ☐ |
 | T3 | Site correto com nome e marcador | ☐ | ☐ |
