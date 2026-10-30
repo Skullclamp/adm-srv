@@ -20,6 +20,15 @@ validar_parametros
 
 As funções `teste_http`, `teste_https`, `codigo_https` e `restic_lab` são definidas no ficheiro de parâmetros. `teste_https` exige sucesso HTTP; `codigo_https` permite observar também os códigos de falha. Em cada tarefa, recolhe a evidência antes da intervenção e volta a testar o mesmo alvo depois.
 
+### Distinguir comandos e conteúdo dos ficheiros
+
+- Os blocos **`bash`** contêm comandos para executar no terminal da máquina indicada.
+- Os blocos **`nginx`**, **`ini`**, **`html`** e de texto com conteúdo de ficheiros são para colar no editor aberto no passo anterior.
+- Nos modelos, substitui todos os marcadores **`@…@`** pelos valores reais da cópia local de parâmetros. O editor não expande variáveis Bash. Para consultar um valor no terminal, usa, por exemplo, `printf '%s\n' "$NOME_SITE"`.
+- Nos ficheiros Nginx, conserva **`$host`** e **`$request_uri`** exatamente como aparecem: são variáveis do Nginx, não marcadores a preencher.
+- No nano, guarda com **Ctrl+O**, confirma com **Enter** e sai com **Ctrl+X**. Só depois executa o bloco Bash seguinte.
+- Confirma que não ficaram marcadores por preencher antes de instalar ou validar a configuração.
+
 Os comandos foram revistos documentalmente e quanto à sintaxe. Os resultados descritos abaixo são critérios de verificação; não representam execuções deste guia nas VMs da sala.
 
 ## Preparação CP4 — criar a base numa VM nova
@@ -172,8 +181,30 @@ pgrep -a -x yes || true
 nginx -v
 systemctl is-active nginx
 sudo install -d -o root -g root -m 0755 "$WEB_ROOT"
-printf '<h1>%s - SITE-OK</h1>\n' "$POSTO" | sudo tee "$WEB_ROOT/index.html" >/dev/null
-printf 'ESTADO-%s\n' "$POSTO" | sudo tee "$WEB_ROOT/estado.html" >/dev/null
+sudo nano "$WEB_ROOT/index.html"
+```
+
+**Conteúdo de `index.html`:** substitui `@POSTO@` pelo identificador do posto.
+
+```html
+<h1>@POSTO@ - SITE-OK</h1>
+```
+
+Guarda e fecha o editor. Depois, no terminal, abre o ficheiro de estado:
+
+```bash
+sudo nano "$WEB_ROOT/estado.html"
+```
+
+**Conteúdo de `estado.html`:** substitui `@POSTO@` pelo identificador do posto.
+
+```text
+ESTADO-@POSTO@
+```
+
+Guarda e fecha o editor. Aplica as permissões no terminal:
+
+```bash
 sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
 ```
 
@@ -181,17 +212,24 @@ sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
 
 ```bash
 CONF_TRABALHO="$HOME/site-${POSTO}.conf"
-cat > "$CONF_TRABALHO" <<EOF
-server {
-    listen ${PORTA_HTTP};
-    server_name ${NOME_SITE};
-    root "${WEB_ROOT}";
-    index index.html;
-    access_log "${ACCESS_LOG}";
-    error_log "${ERROR_LOG}";
-}
-EOF
+
+nano "$CONF_TRABALHO"
 ```
+
+**Conteúdo do ficheiro `$CONF_TRABALHO`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
+
+```nginx
+server {
+    listen @PORTA_HTTP@;
+    server_name @NOME_SITE@;
+    root "@WEB_ROOT@";
+    index index.html;
+    access_log "@ACCESS_LOG@";
+    error_log "@ERROR_LOG@";
+}
+```
+
+Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
 
 3. Guarda a configuração anterior, se existir, e aplica só com validação:
 
@@ -308,13 +346,21 @@ openssl x509 -in "$CA_CERT_FORMADOR" -noout -subject -dates
 Confirma o posto e o SAN. Emite apenas para o nome atribuído, usando extensões definidas pelo formador:
 
 ```bash
-cat > "$PEDIDOS/extensoes.cnf" <<EOF
+nano "$PEDIDOS/extensoes.cnf"
+```
+
+**Conteúdo do ficheiro `$PEDIDOS/extensoes.cnf`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
+
+```ini
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:${NOME_SITE}
-EOF
+subjectAltName=DNS:@NOME_SITE@
+```
 
+Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
+
+```bash
 openssl x509 -req -in "$PEDIDOS/$NOME_SITE.csr" \
     -CA "$CA_CERT_FORMADOR" -CAkey "$CA_CHAVE_FORMADOR" -CAcreateserial \
     -out "$PEDIDOS/$NOME_SITE.crt" -days 30 -sha256 \
@@ -333,24 +379,32 @@ openssl verify -CAfile "$CA_CERT" "$HOME/$NOME_SITE.crt"
 sudo install -o root -g root -m 0644 "$HOME/$NOME_SITE.crt" "$DIR_TLS/$NOME_SITE.crt"
 sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t5-$(date +%Y%m%d%H%M%S)"
 
-cat > "$HOME/site-${POSTO}.conf" <<EOF
-server {
-    listen ${PORTA_HTTP};
-    server_name ${NOME_SITE};
-    return 301 https://\$host:${PORTA_HTTPS}\$request_uri;
-}
-server {
-    listen ${PORTA_HTTPS} ssl;
-    server_name ${NOME_SITE};
-    ssl_certificate "${DIR_TLS}/${NOME_SITE}.crt";
-    ssl_certificate_key "${DIR_TLS}/${NOME_SITE}.key";
-    root "${WEB_ROOT}";
-    index index.html;
-    access_log "${ACCESS_LOG}";
-    error_log "${ERROR_LOG}";
-}
-EOF
+nano "$HOME/site-${POSTO}.conf"
+```
 
+**Conteúdo do ficheiro `$HOME/site-${POSTO}.conf`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
+
+```nginx
+server {
+    listen @PORTA_HTTP@;
+    server_name @NOME_SITE@;
+    return 301 https://$host:@PORTA_HTTPS@$request_uri;
+}
+server {
+    listen @PORTA_HTTPS@ ssl;
+    server_name @NOME_SITE@;
+    ssl_certificate "@DIR_TLS@/@NOME_SITE@.crt";
+    ssl_certificate_key "@DIR_TLS@/@NOME_SITE@.key";
+    root "@WEB_ROOT@";
+    index index.html;
+    access_log "@ACCESS_LOG@";
+    error_log "@ERROR_LOG@";
+}
+```
+
+Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
+
+```bash
 sudo install -o root -g root -m 0644 "$HOME/site-${POSTO}.conf" "$NGINX_INCLUDE"
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -587,7 +641,12 @@ systemd-analyze calendar "$CALENDARIO"
 2. Cria os modelos com os valores do posto:
 
 ```bash
-cat > "$HOME/backup-sessao.service" <<EOF
+nano "$HOME/backup-sessao.service"
+```
+
+**Conteúdo do ficheiro `$HOME/backup-sessao.service`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
+
+```ini
 [Unit]
 Description=Backup Restic - sessao final
 Wants=network-online.target
@@ -595,21 +654,32 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=${RESTIC} --repo "${REPO}" --password-file "${PWFILE}" backup "${WEB_ROOT}" /etc/nginx "${VOLUME_CP4_PATH}" --tag sessao-final --tag timer
-EOF
+ExecStart=@RESTIC@ --repo "@REPO@" --password-file "@PWFILE@" backup "@WEB_ROOT@" /etc/nginx "@VOLUME_CP4_PATH@" --tag sessao-final --tag timer
+```
 
-cat > "$HOME/backup-sessao.timer" <<EOF
+Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
+
+```bash
+nano "$HOME/backup-sessao.timer"
+```
+
+**Conteúdo do ficheiro `$HOME/backup-sessao.timer`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
+
+```ini
 [Unit]
 Description=Agendamento do backup Restic - sessao final
 
 [Timer]
-OnCalendar=${CALENDARIO}
+OnCalendar=@CALENDARIO@
 Persistent=true
 
 [Install]
 WantedBy=timers.target
-EOF
+```
 
+Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
+
+```bash
 sudo install -o root -g root -m 0644 "$HOME/backup-sessao.service" /etc/systemd/system/backup-sessao.service
 sudo install -o root -g root -m 0644 "$HOME/backup-sessao.timer" /etc/systemd/system/backup-sessao.timer
 sudo systemd-analyze verify /etc/systemd/system/backup-sessao.service /etc/systemd/system/backup-sessao.timer
@@ -900,7 +970,18 @@ Guarda uma cópia íntegra e introduz deliberadamente uma diretiva inexistente:
 
 ```bash
 sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t16b"
-printf '\ndirectiva_invalida on;\n' | sudo tee -a "$NGINX_INCLUDE" >/dev/null
+sudo nano "$NGINX_INCLUDE"
+```
+
+**Linha a acrescentar no fim do ficheiro de configuração:**
+
+```nginx
+directiva_invalida on;
+```
+
+Guarda e fecha o editor. A diretiva é inválida de propósito. No terminal, tenta reiniciar o serviço:
+
+```bash
 sudo systemctl restart nginx
 ```
 
