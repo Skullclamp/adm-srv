@@ -162,6 +162,52 @@ class LockTests(unittest.TestCase):
 
     shell = ProxmoxTests.shell
 
+    def test_full_dispatch_does_not_reenter_main_when_script_is_sourced(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as task_dir:
+            temporary = Path(task_dir).resolve()
+            state = temporary / 'parametros.sh'
+            state.touch()
+            fixture = temporary / 'criar-vm-formador.sh'
+            overrides = '\nSTATE_DIR=' + shlex.quote(temporary.as_posix()) + '\nSTATE_FILE=' + shlex.quote(state.as_posix()) + '''
+dependencias() { printf 'DEPENDENCIAS\n'; }
+carregar_estado() { NODE=pve-teste; VMID=601; }
+validar_opcoes() { :; }
+verificar_identidade() { printf 'IDENTIDADE\n'; }
+qm() { printf 'status: running\n'; }
+ip_vm() { printf '192.0.2.10\n'; }
+guest() { printf 'pronto\n'; }
+flock() {
+    [[ "$1 $2 $3 $4" == '--nonblock --conflict-exit-code 200 --close' ]] || return 99
+    if [[ ${MOCK_NIVEL:-0} -ge 2 ]]; then
+        printf 'REENTRADA_INDEVIDA\n' >&2
+        return 200
+    fi
+    export MOCK_NIVEL=$((${MOCK_NIVEL:-0} + 1))
+    shift 5
+    "$@"
+}
+'''
+            footer = 'if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi'
+            self.assertIn(footer, SOURCE)
+            adapted = SOURCE.replace('/bin/bash -c', '"$BASH" -c')
+            fixture.write_text(adapted.replace(footer, overrides + '\n' + footer),
+                               encoding='utf-8', newline='\n')
+            # Mesmo nome/caminho em $0 e BASH_SOURCE na primeira chamada: reproduz
+            # a forma usada pelo utilizador, atravessando os dois supervisores.
+            result = self.shell('"$BASH" ' + shlex.quote(fixture.as_posix()) + ' estado')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.count('DEPENDENCIAS'), 1)
+            self.assertEqual(result.stdout.count('IDENTIDADE'), 1)
+            self.assertIn('VMID: 601', result.stdout)
+            self.assertIn('pronto', result.stdout)
+            self.assertNotIn('REENTRADA_INDEVIDA', result.stderr)
+            previous = adapted.replace('adm-srv-formador-bloqueado "${BASH_SOURCE[0]}"', '"$0" "${BASH_SOURCE[0]}"')
+            fixture.write_text(previous.replace(footer, overrides + '\n' + footer),
+                               encoding='utf-8', newline='\n')
+            regression = self.shell('"$BASH" ' + shlex.quote(fixture.as_posix()) + ' estado')
+            self.assertNotEqual(regression.returncode, 0)
+            self.assertIn('REENTRADA_INDEVIDA', regression.stderr)
+
     def test_supervisor_closes_lock_before_executing_commands(self):
         for function, filename in (('com_bloqueio', 'controlo-v2.lock'),
                                    ('com_bloqueio_antigo', 'controlo.lock')):
