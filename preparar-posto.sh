@@ -88,7 +88,7 @@ if [[ "$COMANDO" == verificar ]]; then verificar; exit 0; fi
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 ]] || erro 'Este material usa Ubuntu 26.04 LTS.'
 command -v docker >/dev/null && docker compose version >/dev/null || erro 'Instalar Docker e o plugin Compose antes de preparar o posto.'
-[[ -f "$BASE/cp4/compose.yaml" && -f "$BASE/formador/parametros.exemplo.sh" ]] || erro 'Executar a partir de uma cópia completa do repositório adm-srv.'
+[[ -f "$BASE/cp4/compose.yaml" && -f "$BASE/cp4/migrar-dados.py" && -f "$BASE/formador/parametros.exemplo.sh" ]] || erro 'Executar a partir de uma cópia completa e atualizada do repositório adm-srv.'
 [[ -f "$CA_ORIGEM" ]] || erro 'Indicar --ca-cert com o certificado público da CA existente.'
 openssl x509 -in "$CA_ORIGEM" -noout >/dev/null
 grep -q 'PRIVATE KEY' "$CA_ORIGEM" && erro 'Fornecer só o certificado público, sem chave privada.'
@@ -161,39 +161,34 @@ if [[ "$MIGRAR" == sim ]]; then
         mapfile -t CONTENTORES <<< "$IDS"
         docker stop "${CONTENTORES[@]}"
     fi
-    if docker volume inspect adm-srv-formador_cp4_dados >/dev/null 2>&1; then
+    if [[ -f "$STATE/migracao-cp4.json" ]]; then
+        IDENTIDADE_VOLUME=$(docker volume inspect cp4_dados --format '{{.CreatedAt}}') \
+            || erro 'O volume já migrado está em falta. Recuperar os dados antes de continuar.'
+        python3 "$BASE/cp4/migrar-dados.py" verificar --estado "$STATE/migracao-cp4.json" --identidade "$IDENTIDADE_VOLUME"
+        msg 'A migração anterior foi reconhecida; os trabalhos atuais da CP4 ficam conservados'
+    elif docker volume inspect adm-srv-formador_cp4_dados >/dev/null 2>&1; then
         docker volume create --label com.docker.compose.project=cp4 \
             --label com.docker.compose.volume=dados cp4_dados >/dev/null
-        # Só copiar para um destino vazio ou já idêntico. Os dois volumes ficam guardados.
+        IDENTIDADE_VOLUME=$(docker volume inspect cp4_dados --format '{{.CreatedAt}}')
+        ADOTAR=()
+        # A primeira versão comum já tinha concluído a migração, mas ainda não criava este marcador.
+        if [[ -f /var/lib/adm-srv-formador/pronto-anterior ]] && \
+            grep -Fxq '8ebce3b45c866382669d0737044435febb42a4d3' /var/lib/adm-srv-formador/pronto-anterior; then
+            ADOTAR=(--adotar-existente)
+        fi
         docker run --rm \
             --mount type=volume,src=adm-srv-formador_cp4_dados,dst=/origem,readonly \
             --mount type=volume,src=cp4_dados,dst=/destino \
-            python:3.13-slim python -c '
-from pathlib import Path
-import hashlib, shutil
-def manifest(root):
-    result={}
-    for path in root.rglob("*"):
-        if path.is_symlink():
-            raise SystemExit("A origem contém uma ligação simbólica; rever a migração.")
-        if path.is_file():
-            result[str(path.relative_to(root))]=hashlib.sha256(path.read_bytes()).hexdigest()
-    return result
-source, target=Path("/origem"), Path("/destino")
-before=manifest(source)
-if any(target.iterdir()):
-    if manifest(target)!=before:
-        raise SystemExit("Os volumes antigo e cp4_dados contêm dados diferentes. Ambos foram conservados; decidir a origem antes de retomar.")
-else:
-    shutil.copytree(source, target, dirs_exist_ok=True)
-if manifest(target)!=before:
-    raise SystemExit("A verificação da cópia falhou; a origem foi conservada.")'
+            --mount "type=bind,src=$STATE,dst=/estado" \
+            --mount "type=bind,src=$BASE/cp4/migrar-dados.py,dst=/scripts/migrar-dados.py,readonly" \
+            python:3.13-slim python /scripts/migrar-dados.py migrar \
+                --estado /estado/migracao-cp4.json --identidade "$IDENTIDADE_VOLUME" "${ADOTAR[@]}"
     fi
 fi
 
 msg 'CP4 comum: ~/cp4, projeto cp4, serviço app, volume cp4_dados'
-install -d -m 0755 -o "$ALUNO" -g "$GRUPO" "$CP4"
 [[ ! -L "$CP4" && ! -L "$CP4/compose.yaml" ]] || erro 'A pasta ou o Compose não podem ser ligações simbólicas.'
+install -d -m 0755 -o "$ALUNO" -g "$GRUPO" "$CP4"
 if [[ -f "$CP4/compose.yaml" ]]; then
     docker compose -f "$CP4/compose.yaml" config --format json | python3 -c '
 import json,sys

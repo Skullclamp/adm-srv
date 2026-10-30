@@ -124,7 +124,7 @@ As credenciais e o valor da PSK são entregues pelo canal indicado pelo formador
 
 **M6 · 20 minutos**
 
-1. Identifica a conta usada pelos processos de serviço do Nginx.
+1. Identifica a conta usada pelos processos worker do Nginx, que atendem HTTP/HTTPS. Aqui, worker não significa um nó do Kubernetes.
 2. Verifica os donos e as permissões do caminho até `estado.html`. A conta de serviço consegue ler o ficheiro? Consegue alterá-lo?
 3. Ajusta o necessário para permitir leitura e travessia, preservando o conteúdo contra escrita pela conta de serviço. Não uses permissões `777`.
 4. Revê o UFW. Mantém a regra SSH e a recolha do Zabbix; permite as portas do site apenas à rede de laboratório.

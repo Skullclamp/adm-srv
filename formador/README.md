@@ -10,6 +10,7 @@ Esta pasta reúne a resolução da sessão prática M4–M8, incluindo a prepara
 |---|---|
 | [GUIA_RESOLUCAO.md](GUIA_RESOLUCAO.md) | Resolução passo a passo de T0–T17, resultados esperados, respostas, falhas e recuperação |
 | [parametros.exemplo.sh](parametros.exemplo.sh) | Modelo sem valores da infraestrutura, para preencher numa cópia local |
+| [VERIFICACAO.md](VERIFICACAO.md) | Correções de T0–T17, testes executados e limites da validação |
 | [Ambiente comum](../AMBIENTE_COMUM.md) | Mesmos nomes, pastas e comandos para formador e formandos |
 | [Preparar posto](../preparar-posto.sh) | Preparação comum de CP4, Nginx, Restic, Agent 2, parâmetros e modelos |
 | [proxmox/](proxmox/) | Criar ou alinhar a VM Ubuntu 26.04 com o ambiente dos formandos |
@@ -43,6 +44,6 @@ Os comandos `docker`, `nginx`, `restic`, `systemctl` e os caminhos Linux apresen
 
 ## Validação e limites
 
-Este guia adapta a documentação da sessão e os materiais correntes do repositório. A verificação desta publicação é estática: sintaxe dos blocos Bash, ligações e cobertura das tarefas. Não equivale a um ensaio destes procedimentos nas VMs da sala.
+Este guia adapta a documentação da sessão e os materiais correntes do repositório. A [verificação desta publicação](VERIFICACAO.md) inclui sintaxe dos blocos Bash, ligações, parâmetros e testes de migração e de serviços simulados. Não equivale a um ensaio destes procedimentos nas VMs da sala.
 
 Os tempos e a ordem seguem o enunciado: sessão de 8 horas, T0–T17 e avaliação formativa. A criação da CP4 é uma preparação para o arranque; se consumir o tempo de T0, aplica uma referência funcional e regista o apoio recebido. A configuração de plataformas, pacotes e hipervisor pertence à preparação técnica do laboratório.

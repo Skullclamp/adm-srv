@@ -68,7 +68,7 @@ Regista comandos ou consultas utilizados, resultados relevantes e explicações.
 
 | Campo | Resposta / evidência |
 |---|---|
-| Conta de serviço | |
+| Conta dos processos worker do Nginx | |
 | Donos e permissões relevantes | |
 | Resultado do teste de leitura / escrita pela conta de serviço | |
 | Regras UFW e origens autorizadas | |

@@ -47,26 +47,48 @@ CA_CHAVE_FORMADOR=""    # caminho da chave da mesma CA; não criar outra CA nest
 
 validar_parametros() {
     local nome valor
-    for nome in POSTO IP_VM REDE_LAB IP_ZABBIX NOME_SITE COMPOSE_CP4 AMOSTRA_ORIGEM \
+    for nome in POSTO IP_VM REDE_LAB IP_ZABBIX NOME_SITE PORTA_HTTP PORTA_HTTPS PORTA_BACKEND COMPOSE_CP4 VOLUME_CP4 VOLUME_CP4_PATH AMOSTRA_ORIGEM \
         WEB_ROOT NGINX_INCLUDE ACCESS_LOG ERROR_LOG CA_CERT DIR_TLS \
-        PONTO_REPO REPO PWFILE NOME_LOGICO_DO_POSTO GRUPO_HOSTS IDENTIFICADOR_PUBLICO; do
-        if [[ -z "${!nome}" ]]; then
+        PONTO_REPO REPO PWFILE CALENDARIO URL_ZABBIX NOME_LOGICO_DO_POSTO GRUPO_HOSTS IDENTIFICADOR_PUBLICO PSK_FILE; do
+        if [[ -z "${!nome:-}" ]]; then
             printf 'Preencher o parâmetro %s na cópia local.\n' "$nome" >&2
             return 1
         fi
     done
     [[ "$POSTO" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "POSTO inválido." >&2; return 1; }
     [[ "$NOME_SITE" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "NOME_SITE inválido." >&2; return 1; }
-    for nome in COMPOSE_CP4 AMOSTRA_ORIGEM WEB_ROOT NGINX_INCLUDE ACCESS_LOG ERROR_LOG CA_CERT DIR_TLS PONTO_REPO REPO PWFILE; do
-        valor=${!nome}
+    for nome in COMPOSE_CP4 VOLUME_CP4_PATH AMOSTRA_ORIGEM WEB_ROOT NGINX_INCLUDE ACCESS_LOG ERROR_LOG CA_CERT DIR_TLS PONTO_REPO REPO PWFILE PSK_FILE; do
+        valor=${!nome:-}
         if [[ "$valor" != /* || "$valor" == / || "$valor" == *[[:space:]]* ]]; then
             printf '%s deve ser um caminho absoluto dedicado, sem espaços e diferente de /.\n' "$nome" >&2
             return 1
         fi
     done
+    [[ "$VOLUME_CP4" == cp4_dados ]] || { echo 'O volume comum deve chamar-se cp4_dados.' >&2; return 1; }
+    [[ "$PORTA_HTTP" != "$PORTA_HTTPS" && "$PORTA_HTTP" != "$PORTA_BACKEND" && "$PORTA_HTTPS" != "$PORTA_BACKEND" ]] \
+        || { echo 'As portas HTTP, HTTPS e backend devem ser diferentes.' >&2; return 1; }
+    python3 - "$IP_VM" "$IP_ZABBIX" "$REDE_LAB" "$URL_ZABBIX" \
+        "$COMPOSE_CP4" "$VOLUME_CP4_PATH" "$AMOSTRA_ORIGEM" "$WEB_ROOT" "$NGINX_INCLUDE" \
+        "$ACCESS_LOG" "$ERROR_LOG" "$CA_CERT" "$DIR_TLS" "$PONTO_REPO" "$REPO" "$PWFILE" "$PSK_FILE" <<'PY_PARAMETROS'
+import ipaddress, posixpath, sys
+from urllib.parse import urlsplit
+try:
+    ipaddress.IPv4Address(sys.argv[1])
+    ipaddress.IPv4Address(sys.argv[2])
+    network=ipaddress.IPv4Network(sys.argv[3], strict=False)
+    url=urlsplit(sys.argv[4])
+    if url.scheme not in ('http','https') or not url.hostname or url.username or url.password:
+        raise ValueError('URL_ZABBIX deve ser http(s), sem credenciais embutidas')
+    for path in sys.argv[5:]:
+        if posixpath.normpath(path)!=path or '\n' in path or '\r' in path:
+            raise ValueError('Caminho não normalizado: '+path)
+except ValueError as exc:
+    raise SystemExit('Parâmetro inválido: '+str(exc))
+PY_PARAMETROS
+    [[ $? -eq 0 ]] || return 1
     for nome in PORTA_HTTP PORTA_HTTPS PORTA_BACKEND; do
-        valor=${!nome}
-        if [[ ! "$valor" =~ ^[1-9][0-9]*$ ]] || (( valor > 65535 )); then
+        valor=${!nome:-}
+        if [[ ! "$valor" =~ ^[1-9][0-9]*$ || ${#valor} -gt 5 ]] || (( valor > 65535 )); then
             printf 'Porta inválida em %s.\n' "$nome" >&2
             return 1
         fi
@@ -83,12 +105,14 @@ validar_parametros() {
 }
 
 restic_lab() {
-    [[ -n "$REPO" && -n "$PWFILE" ]] || { echo "Preencher REPO e PWFILE." >&2; return 1; }
+    [[ -n "${REPO:-}" && -n "${PWFILE:-}" ]] || { echo "Preencher REPO e PWFILE." >&2; return 1; }
+    command -v restic >/dev/null || { echo 'Falta Restic no Ubuntu; concluir a preparação antes de T7.' >&2; return 1; }
+    sudo test -s "$PWFILE" || { echo 'O ficheiro de segredo está em falta ou vazio; rever T7 sem substituir segredos existentes.' >&2; return 1; }
     sudo restic --repo "$REPO" --password-file "$PWFILE" "$@"
 }
 
 teste_http() {
-    curl --silent --show-error --max-time 10 \
+    curl --fail --silent --show-error --max-time 10 \
         --resolve "${NOME_SITE}:${PORTA_HTTP}:${IP_VM}" \
         "http://${NOME_SITE}:${PORTA_HTTP}${1:-/estado.html}"
 }

@@ -1,12 +1,14 @@
 # Guia de resolução passo a passo — Sessão final M4–M8
 
-**Material do formador · Preparação CP4 e tarefas T0–T17 · Versão 1.0 — 30-10-2026**
+**Material do formador · Preparação CP4 e tarefas T0–T17 · Versão 1.1 — 30-10-2026**
 
 Este guia acompanha o [enunciado](../README.md), a [preparação CP4](../PREPARAR_CP4.md) e a [folha de respostas](../FOLHA_DE_RESPOSTAS.md). Contém soluções e cenários de falha. Como o repositório é público, os formandos também o podem consultar.
 
 O formador executa a resolução num posto com o [mesmo ambiente dos formandos](../AMBIENTE_COMUM.md): `~/cp4`, projeto `cp4`, serviço `app` e volume `cp4_dados`; Nginx, Restic e Agent 2 são serviços do Ubuntu. Os caminhos que incluem `$POSTO` seguem a mesma regra em todas as VMs.
 
 ## Preparar a execução
+
+Se a ficha `~/parametros-posto.sh` estiver em falta, conclui a preparação comum antes dos exercícios. Se estás a preparar a CP4 manualmente, segue primeiro `PREPARAR_CP4.md` e obtém a localização do volume antes de validar a ficha. Não continues com variáveis vazias.
 
 1. Atribui um posto a cada formando. Confirma ferramentas instaladas, acesso SSH, consola de recuperação, disco de backup, CA distribuída e Zabbix operacional.
 2. Usa uma cópia local de [parametros.exemplo.sh](parametros.exemplo.sh), preenchida com a ficha do posto. Os valores reais ficam fora deste repositório.
@@ -43,8 +45,9 @@ Os comandos foram revistos documentalmente e quanto à sintaxe. Os resultados de
 4. Obtém a localização real dos dados:
 
 ```bash
-VOLUME_CP4_PATH=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}')
-printf 'Volume: %s\nLocalização: %s\n' "$VOLUME_CP4" "$VOLUME_CP4_PATH"
+VOLUME_CP4=cp4_dados
+VOLUME_CP4_PATH=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}') &&
+printf 'Volume: %s\nLocalização: %s\n' "$VOLUME_CP4" "$VOLUME_CP4_PATH" &&
 sudo test -d "$VOLUME_CP4_PATH"
 ```
 
@@ -55,6 +58,23 @@ sudo test -d "$VOLUME_CP4_PATH"
 ## T0 — Arranque e verificação
 
 **Contexto: VM do posto · 15 min · reposição às 08:45.**
+
+### Pré-verificação de T0
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v docker
+    command -v curl
+    sudo docker info >/dev/null
+    test -s "$COMPOSE_CP4"
+    sudo docker compose -f "$COMPOSE_CP4" config --quiet
+)
+```
 
 1. Confirma o posto e o estado do sistema:
 
@@ -70,19 +90,31 @@ sudo docker ps -a --filter label=com.docker.compose.project=cp4
 2. Confirma o Compose atribuído e a montagem:
 
 ```bash
-sudo docker compose -f "$COMPOSE_CP4" ps
-CONTENTOR=$(sudo docker compose -f "$COMPOSE_CP4" ps -q app)
-sudo docker inspect "$CONTENTOR" \
-    --format '{{range .Mounts}}{{println .Name "->" .Destination}}{{end}}'
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo docker compose -f "$COMPOSE_CP4" ps
+    CONTENTOR=$(sudo docker compose -f "$COMPOSE_CP4" ps -q app)
+    if [[ -z "$CONTENTOR" ]]; then
+        echo 'O serviço app não está em execução; validar o Compose e executar up -d app antes de inspecionar.' >&2
+    else
+        sudo docker inspect "$CONTENTOR" \
+            --format '{{range .Mounts}}{{println .Name "->" .Destination}}{{end}}'
+    fi
+}
 ```
 
 3. Testa a aplicação a partir da própria VM:
 
 ```bash
-curl --retry 5 --retry-connrefused --retry-delay 1 --max-time 10 \
-    --fail --silent --show-error "http://127.0.0.1:${PORTA_BACKEND}/"
-curl --silent --output /dev/null --write-out '%{http_code}\n' \
-    "http://127.0.0.1:${PORTA_BACKEND}/"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    curl --retry 5 --retry-connrefused --retry-delay 1 --max-time 10 \
+        --fail --silent --show-error "http://127.0.0.1:${PORTA_BACKEND}/"
+    curl --silent --output /dev/null --write-out '%{http_code}\n' \
+        "http://127.0.0.1:${PORTA_BACKEND}/"
+}
 ```
 
 **Validar:** resposta `200`, conteúdo coerente e explicação de projeto, serviço, contentor e volume. O volume de dados não é a camada gravável do contentor.
@@ -92,6 +124,22 @@ curl --silent --output /dev/null --write-out '%{http_code}\n' \
 ## T1 — Decisão de proteção e restauro amostral
 
 **Contexto: VM do posto · 30 min.**
+
+### Pré-verificação de T1
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v tar
+    command -v sha256sum
+    sudo test -d "$AMOSTRA_ORIGEM"
+    [[ -n $(sudo find "$AMOSTRA_ORIGEM" -type f -print -quit) ]] || { echo 'A amostra T1 está vazia.' >&2; exit 1; }
+)
+```
 
 ### Decisão e respostas esperadas
 
@@ -114,6 +162,8 @@ Executa o ensaio completo numa pasta nova. O bloco termina na primeira falha e c
 ```bash
 (
     set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
     : "${AMOSTRA_ORIGEM:?Carrega primeiro parametros-posto.sh}"
     sudo test -d "$AMOSTRA_ORIGEM"
     T1_DIR=$(mktemp -d "$HOME/t1-ensaio.XXXXXX")
@@ -140,21 +190,43 @@ Executa o ensaio completo numa pasta nova. O bloco termina na primeira falha e c
 
 **Contexto: VM do posto · 30 min.**
 
+### Pré-verificação de T2
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v timeout
+    command -v yes
+    command -v top
+    command -v nproc
+    systemctl is-active --quiet docker
+    curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${PORTA_BACKEND}/" >/dev/null
+)
+```
+
 1. Recolhe uma baseline com hora e unidade:
 
 ```bash
-date --iso-8601=seconds
-uptime
-nproc
-free -h
-df -h /
-df -i /
-systemctl is-active docker
-sudo ss -tlnp
-curl --silent --output /dev/null \
-    --write-out 'codigo=%{http_code} tempo=%{time_total}s\n' \
-    "http://127.0.0.1:${PORTA_BACKEND}/"
-top
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    date --iso-8601=seconds
+    uptime
+    nproc
+    free -h
+    df -h /
+    df -i /
+    systemctl is-active docker
+    sudo ss -tlnp
+    curl --silent --output /dev/null \
+        --write-out 'codigo=%{http_code} tempo=%{time_total}s\n' \
+        "http://127.0.0.1:${PORTA_BACKEND}/"
+    top
+}
 ```
 
 Sai do `top` com `q`. Na folha, regista load average, CPU, memória disponível, disco/inodes e resposta HTTP. Não inventes valores de referência: usam-se os observados em cada posto.
@@ -214,8 +286,12 @@ Se a ficha não existir ou a validação falhar, conclui a [preparação comum](
 ### 1. Criar conteúdo identificável
 
 ```bash
-sudo install -d -o root -g root -m 0755 "$WEB_ROOT"
-sudo nano "$WEB_ROOT/index.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo install -d -o root -g root -m 0755 "$WEB_ROOT"
+    sudo nano "$WEB_ROOT/index.html"
+}
 ```
 
 **Conteúdo de `index.html`:** substitui `@POSTO@` pelo identificador do posto.
@@ -227,7 +303,11 @@ sudo nano "$WEB_ROOT/index.html"
 Guarda e fecha o editor. Depois, no terminal, abre o ficheiro de estado:
 
 ```bash
-sudo nano "$WEB_ROOT/estado.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo nano "$WEB_ROOT/estado.html"
+}
 ```
 
 **Conteúdo de `estado.html`:** substitui `@POSTO@` pelo identificador do posto.
@@ -239,15 +319,23 @@ ESTADO-@POSTO@
 Guarda e fecha o editor. Aplica as permissões no terminal:
 
 ```bash
-sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
+}
 ```
 
 ### 2. Criar a configuração de trabalho
 
 ```bash
-CONF_TRABALHO="$HOME/site-${POSTO}.conf"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    CONF_TRABALHO="$HOME/site-${POSTO}.conf"
 
-nano "$CONF_TRABALHO"
+    nano "$CONF_TRABALHO"
+}
 ```
 
 **Conteúdo do ficheiro `$CONF_TRABALHO`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
@@ -335,62 +423,117 @@ curl --silent --show-error --output /dev/null --write-out '%{http_code}\n' \
 
 **Contexto: VM do posto · 20 min.**
 
-1. Identifica a conta dos workers e testa os acessos:
+Nesta tarefa, **worker é um processo de trabalho do Nginx**, responsável pelos pedidos HTTP/HTTPS. Não se refere a nós worker do Kubernetes. No Ubuntu, a conta é normalmente `www-data`; confirma o valor observado em vez de o assumir. O processo master pode executar como root e não é a identidade usada neste teste de leitura/escrita.
+
+1. Identifica a conta dos processos worker do Nginx e testa os acessos:
 
 ```bash
-ps -o user=,args= -C nginx
-WORKER=$(ps -o user=,args= -C nginx | awk '/worker process/ {print $1; exit}')
-printf 'Conta de serviço: %s\n' "$WORKER"
-namei -l "$WEB_ROOT/estado.html"
-if [[ -z "$WORKER" ]]; then
-    echo 'Não foi identificada uma conta de worker: verificar o Nginx.'
-else
-    sudo -u "$WORKER" test -r "$WEB_ROOT/estado.html" && echo 'Leitura permitida'
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    [[ "$WEB_ROOT" == "/var/www/$POSTO" ]] || {
+        echo 'WEB_ROOT não corresponde à pasta do posto. Rever a ficha antes de continuar.' >&2
+        exit 1
+    }
+    sudo test -d "$WEB_ROOT"
+    sudo test -s "$WEB_ROOT/estado.html"
+    systemctl is-active --quiet nginx
+    NGINX_PID=$(systemctl show nginx --property=MainPID --value)
+    [[ "$NGINX_PID" =~ ^[1-9][0-9]*$ ]] || { echo 'Nginx sem processo master ativo.' >&2; exit 1; }
+    ps --ppid "$NGINX_PID" -o user:64=,args=
+    mapfile -t CONTAS_NGINX < <(ps --ppid "$NGINX_PID" -o user:64=,args= | awk '/nginx: worker process/ {print $1}' | sort -u)
+    [[ ${#CONTAS_NGINX[@]} -eq 1 ]] || { echo 'Não foi identificada uma única conta para os workers deste serviço.' >&2; exit 1; }
+    WORKER=${CONTAS_NGINX[0]}
+    [[ "$WORKER" != root ]] || { echo 'Workers como root: rever a configuração do serviço.' >&2; exit 1; }
+    printf 'Nginx do Ubuntu: master PID=%s; workers=%s; site=%s\n' "$NGINX_PID" "$WORKER" "$WEB_ROOT"
+    namei -l "$WEB_ROOT/estado.html"
+    if sudo -u "$WORKER" test -r "$WEB_ROOT/estado.html"; then
+        echo 'Leitura permitida'
+    else
+        echo 'Leitura negada: rever permissões do caminho e do ficheiro'
+    fi
     if sudo -u "$WORKER" test -w "$WEB_ROOT/estado.html"; then
         echo 'Escrita permitida: corrigir'
     else
         echo 'Escrita negada'
     fi
-fi
+)
 ```
 
-Se `WORKER` ficar vazio, resolve o estado do Nginx antes dos testes de identidade. Para o conteúdo criado neste percurso, o estado de referência é dono `root:root`, diretório `0755` e ficheiros `0644`:
+`ps -C nginx` também pode listar processos de contentores, apresentando os UID segundo as contas do anfitrião, como `uuidd` ou um número. Usa os filhos do `MainPID` da unidade `nginx` para testar o serviço do Ubuntu. Se o bloco parar, resolve a falta de parâmetros, conteúdo ou serviço antes de avançar. Para o conteúdo deste percurso, o estado de referência é dono `root:root`, diretório `0755` e ficheiros `0644`:
 
 ```bash
-sudo chown root:root "$WEB_ROOT" "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
-sudo chmod 0755 "$WEB_ROOT"
-sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    [[ "$WEB_ROOT" == "/var/www/$POSTO" && ! -L "$WEB_ROOT" ]] || { echo 'Raiz do site inesperada; permissões não alteradas.' >&2; exit 1; }
+    sudo test -d "$WEB_ROOT"
+    sudo test -s "$WEB_ROOT/index.html"
+    sudo test -s "$WEB_ROOT/estado.html"
+    sudo chown root:root "$WEB_ROOT" "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
+    sudo chmod 0755 "$WEB_ROOT"
+    sudo chmod 0644 "$WEB_ROOT/index.html" "$WEB_ROOT/estado.html"
+)
 ```
 
 2. Mantém SSH e recolha do agente; abre HTTP/HTTPS para a rede atribuída:
 
 ```bash
-sudo ufw status numbered
-sudo ufw allow OpenSSH
-sudo ufw allow from "$IP_ZABBIX" to any port 10050 proto tcp
-sudo ufw allow from "$REDE_LAB" to any port "$PORTA_HTTP" proto tcp
-sudo ufw allow from "$REDE_LAB" to any port "$PORTA_HTTPS" proto tcp
-sudo ufw --force enable
-sudo ufw status numbered
-teste_http
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v ufw
+    sudo ufw status numbered
+    sudo ufw allow OpenSSH
+    sudo ufw allow from "$IP_ZABBIX" to any port 10050 proto tcp
+    sudo ufw allow from "$REDE_LAB" to any port "$PORTA_HTTP" proto tcp
+    sudo ufw allow from "$REDE_LAB" to any port "$PORTA_HTTPS" proto tcp
+    sudo ufw --force enable
+    sudo ufw status numbered
+    teste_http
+)
 ```
 
 **Validar:** leitura sim, escrita não e página funcional. A regra do agente deve limitar a origem ao servidor Zabbix; verifica se não ficou uma regra anterior mais ampla. Não faças reset da firewall nem retires a regra de recuperação SSH.
 
 ## T5 — HTTPS com a CA existente
 
-**Contextos: VM do posto e máquina do formador · 40 min · reposição às 11:15.**
+**Contextos: VM do posto e anfitrião Proxmox com a CA · 40 min · reposição às 11:15.**
 
-### A. Na VM do posto: chave e CSR
+### Pré-verificação de T5
+
+**Executar: VM Ubuntu do posto; a assinatura tem outro contexto indicado abaixo.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
 
 ```bash
-sudo install -d -o root -g root -m 0700 "$DIR_TLS"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v openssl
+    sudo nginx -t
+    systemctl is-active --quiet nginx
+    test -s "$CA_CERT"
+    openssl x509 -in "$CA_CERT" -checkend 0 -noout
+    sudo test -s "$NGINX_INCLUDE"
+    teste_http >/dev/null
+)
 ```
+
+### A. Na VM do posto: chave e CSR
 
 Se já existir uma chave deste site, o bloco conserva-a e cria apenas um CSR novo. Se estiver em falta, gera a chave e o CSR:
 
 ```bash
-if sudo test -e "$DIR_TLS/$NOME_SITE.key"; then
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    [[ "$DIR_TLS" == /etc/nginx/* ]] || exit 1
+    sudo install -d -o root -g root -m 0700 "$DIR_TLS"
+    if sudo test -e "$DIR_TLS/$NOME_SITE.key"; then
     sudo openssl req -new -key "$DIR_TLS/$NOME_SITE.key" \
         -out "$HOME/$NOME_SITE.csr" -subj "/CN=$NOME_SITE" \
         -addext "subjectAltName=DNS:$NOME_SITE"
@@ -402,28 +545,42 @@ fi
 sudo chmod 0600 "$DIR_TLS/$NOME_SITE.key"
 sudo chown "$(id -u):$(id -g)" "$HOME/$NOME_SITE.csr"
 openssl req -in "$HOME/$NOME_SITE.csr" -noout -subject -text
+)
 ```
 
 O CSR é enviado ao formador. A chave privada do servidor permanece na VM.
 
-### B. Na máquina do formador / Proxmox: assinar
+### B. No anfitrião Proxmox que guarda a CA privada: assinar
 
-Carrega a cópia privada de parâmetros dessa máquina. `CA_CERT_FORMADOR` e `CA_CHAVE_FORMADOR` têm de apontar para **a mesma CA que já foi distribuída aos postos**. Não cries outra CA para resolver uma emissão em falta.
+A VM `formador-docker` é um posto de demonstração, tal como as VMs dos formandos. Esta etapa é executada no anfitrião Proxmox que guarda a CA, não nessa VM. Carrega no Proxmox a ficha privada do posto cujo CSR vais assinar. `CA_CERT_FORMADOR` e `CA_CHAVE_FORMADOR` têm de apontar para **a mesma CA que já foi distribuída aos postos**. Não cries outra CA para resolver uma emissão em falta.
 
 ```bash
-PEDIDOS="$HOME/pedidos-certificados-$POSTO"
-install -d -m 0700 "$PEDIDOS"
-scp -i "$CHAVE_SSH_FORMADOR" \
-    "$ALUNO@$IP_VM:/home/$ALUNO/$NOME_SITE.csr" "$PEDIDOS/"
-openssl req -in "$PEDIDOS/$NOME_SITE.csr" -noout -verify
-openssl req -in "$PEDIDOS/$NOME_SITE.csr" -noout -subject -text
-openssl x509 -in "$CA_CERT_FORMADOR" -noout -subject -dates
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+PEDIDOS="$HOME/pedidos-certificados-$POSTO" &&
+(
+    set -euo pipefail
+    [[ -d /etc/pve ]] || { echo 'Executar no anfitrião Proxmox que guarda a CA privada.' >&2; exit 1; }
+    : "${ALUNO:?Preencher ALUNO na ficha privada do Proxmox}"
+    : "${CHAVE_SSH_FORMADOR:?Preencher CHAVE_SSH_FORMADOR}"
+    : "${CA_CERT_FORMADOR:?Preencher CA_CERT_FORMADOR}"
+    : "${CA_CHAVE_FORMADOR:?Preencher CA_CHAVE_FORMADOR}"
+    test -r "$CHAVE_SSH_FORMADOR"
+    test -s "$CA_CERT_FORMADOR"
+    test -s "$CA_CHAVE_FORMADOR"
+    install -d -m 0700 "$PEDIDOS"
+    scp -i "$CHAVE_SSH_FORMADOR" "$ALUNO@$IP_VM:/home/$ALUNO/$NOME_SITE.csr" "$PEDIDOS/"
+    test -s "$PEDIDOS/$NOME_SITE.csr"
+    openssl req -in "$PEDIDOS/$NOME_SITE.csr" -noout -verify
+    openssl req -in "$PEDIDOS/$NOME_SITE.csr" -noout -subject -text
+    openssl x509 -in "$CA_CERT_FORMADOR" -noout -subject -dates
+)
 ```
 
 Confirma o posto e o SAN. Emite apenas para o nome atribuído, usando extensões definidas pelo formador:
 
 ```bash
-nano "$PEDIDOS/extensoes.cnf"
+nano "${PEDIDOS:?Receber e validar primeiro o CSR no Proxmox}/extensoes.cnf"
 ```
 
 **Conteúdo do ficheiro `$PEDIDOS/extensoes.cnf`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
@@ -438,25 +595,62 @@ subjectAltName=DNS:@NOME_SITE@
 Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
 
 ```bash
-openssl x509 -req -in "$PEDIDOS/$NOME_SITE.csr" \
-    -CA "$CA_CERT_FORMADOR" -CAkey "$CA_CHAVE_FORMADOR" -CAcreateserial \
-    -out "$PEDIDOS/$NOME_SITE.crt" -days 30 -sha256 \
-    -extfile "$PEDIDOS/extensoes.cnf"
-openssl verify -CAfile "$CA_CERT_FORMADOR" "$PEDIDOS/$NOME_SITE.crt"
-scp -i "$CHAVE_SSH_FORMADOR" "$PEDIDOS/$NOME_SITE.crt" \
-    "$ALUNO@$IP_VM:/home/$ALUNO/"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    [[ -d /etc/pve ]] || { echo 'A assinatura é executada no Proxmox, com a ficha privada carregada.' >&2; exit 1; }
+    : "${PEDIDOS:?Executar primeiro a receção do CSR no Proxmox}"
+    : "${CA_CERT_FORMADOR:?Preencher o certificado da CA existente}"
+    : "${CA_CHAVE_FORMADOR:?Preencher a chave da mesma CA}"
+    : "${ALUNO:?Preencher ALUNO}"
+    : "${CHAVE_SSH_FORMADOR:?Preencher CHAVE_SSH_FORMADOR}"
+    test -s "$PEDIDOS/$NOME_SITE.csr"
+    test -s "$PEDIDOS/extensoes.cnf"
+    test -s "$CA_CERT_FORMADOR"
+    test -s "$CA_CHAVE_FORMADOR"
+    if grep -nE '@[A-Z0-9_]+@' "$PEDIDOS/extensoes.cnf"; then
+        echo 'Preencher as extensões antes de assinar.' >&2
+        exit 1
+    fi
+    openssl req -in "$PEDIDOS/$NOME_SITE.csr" -noout -verify
+    openssl x509 -req -in "$PEDIDOS/$NOME_SITE.csr" \
+        -CA "$CA_CERT_FORMADOR" -CAkey "$CA_CHAVE_FORMADOR" -CAcreateserial \
+        -out "$PEDIDOS/$NOME_SITE.crt" -days 30 -sha256 -extfile "$PEDIDOS/extensoes.cnf"
+    openssl verify -CAfile "$CA_CERT_FORMADOR" -verify_hostname "$NOME_SITE" -purpose sslserver "$PEDIDOS/$NOME_SITE.crt"
+    scp -i "$CHAVE_SSH_FORMADOR" "$PEDIDOS/$NOME_SITE.crt" "$ALUNO@$IP_VM:/home/$ALUNO/"
+)
 ```
 
 ### C. Na VM do posto: inspecionar, instalar e aplicar
 
 ```bash
-openssl x509 -in "$HOME/$NOME_SITE.crt" \
-    -noout -subject -issuer -dates -ext subjectAltName
-openssl verify -CAfile "$CA_CERT" "$HOME/$NOME_SITE.crt"
-sudo install -o root -g root -m 0644 "$HOME/$NOME_SITE.crt" "$DIR_TLS/$NOME_SITE.crt"
-sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t5-$(date +%Y%m%d%H%M%S)"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    test -s "$HOME/$NOME_SITE.crt"
+    sudo test -s "$DIR_TLS/$NOME_SITE.key"
+    openssl x509 -in "$HOME/$NOME_SITE.crt" -noout -subject -issuer -dates -ext subjectAltName
+    openssl verify -CAfile "$CA_CERT" -verify_hostname "$NOME_SITE" -purpose sslserver "$HOME/$NOME_SITE.crt"
+    CERT_HASH=$(openssl x509 -in "$HOME/$NOME_SITE.crt" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')
+    CHAVE_HASH=$(sudo openssl pkey -in "$DIR_TLS/$NOME_SITE.key" -pubout -outform DER | sha256sum | awk '{print $1}')
+    [[ "$CERT_HASH" == "$CHAVE_HASH" ]] || { echo 'O certificado não corresponde à chave privada deste posto.' >&2; exit 1; }
+    if sudo test -e "$DIR_TLS/$NOME_SITE.crt"; then
+        sudo cp -a "$DIR_TLS/$NOME_SITE.crt" "$DIR_TLS/$NOME_SITE.crt.antes-t5-$(date +%Y%m%d%H%M%S)"
+    fi
+    sudo install -o root -g root -m 0644 "$HOME/$NOME_SITE.crt" "$DIR_TLS/$NOME_SITE.crt"
+)
+```
 
-nano "$HOME/site-${POSTO}.conf"
+Depois de a verificação terminar sem erro, abre a configuração de trabalho na mesma sessão:
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    nano "$HOME/site-${POSTO}.conf"
+}
 ```
 
 **Conteúdo do ficheiro `$HOME/site-${POSTO}.conf`:** substitui os marcadores `@…@` pelos valores da cópia local de parâmetros.
@@ -482,20 +676,44 @@ server {
 Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
 
 ```bash
-sudo install -o root -g root -m 0644 "$HOME/site-${POSTO}.conf" "$NGINX_INCLUDE"
-sudo nginx -t && sudo systemctl reload nginx
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    CONF_TRABALHO="$HOME/site-${POSTO}.conf"
+    test -s "$CONF_TRABALHO"
+    sudo test -s "$NGINX_INCLUDE"
+    if grep -nE '@[A-Z0-9_]+@' "$CONF_TRABALHO"; then
+        echo 'Preencher os marcadores da configuração HTTPS antes de instalar.' >&2
+        exit 1
+    fi
+    BACKUP="${NGINX_INCLUDE}.antes-t5-$(date +%Y%m%d%H%M%S)"
+    sudo cp -a "$NGINX_INCLUDE" "$BACKUP"
+    sudo install -o root -g root -m 0644 "$CONF_TRABALHO" "$NGINX_INCLUDE"
+    if ! sudo nginx -t; then
+        sudo mv -- "$NGINX_INCLUDE" "${NGINX_INCLUDE}.rejeitado-t5-$(date +%Y%m%d%H%M%S)"
+        sudo cp -a "$BACKUP" "$NGINX_INCLUDE"
+        echo 'HTTPS não aplicado; configuração anterior reposta. Corrigir o ficheiro de trabalho.' >&2
+        exit 1
+    fi
+    sudo systemctl reload nginx
+)
 ```
 
 4. Verifica cadeia, nome, prazo, conteúdo e redireção:
 
 ```bash
-teste_https
-codigo_https
-curl --silent --show-error --head \
-    --resolve "${NOME_SITE}:${PORTA_HTTP}:${IP_VM}" \
-    "http://${NOME_SITE}:${PORTA_HTTP}/"
-openssl s_client -connect "$IP_VM:$PORTA_HTTPS" -servername "$NOME_SITE" \
-    -CAfile "$CA_CERT" -verify_hostname "$NOME_SITE" -verify_return_error </dev/null
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    teste_https
+    codigo_https
+    curl --silent --show-error --head \
+        --resolve "${NOME_SITE}:${PORTA_HTTP}:${IP_VM}" \
+        "http://${NOME_SITE}:${PORTA_HTTP}/"
+    openssl s_client -connect "$IP_VM:$PORTA_HTTPS" -servername "$NOME_SITE" \
+        -CAfile "$CA_CERT" -verify_hostname "$NOME_SITE" -verify_return_error </dev/null
+}
 ```
 
 **Esperado:** marcador correto, HTTPS `200`, HTTP `301`, nome/SAN correto, certificado dentro do prazo e verificação TLS bem-sucedida. Não aceitar validação com `-k` ou `--insecure`. As opções de nome e de erro de verificação do cliente estão descritas em [openssl s_client](https://docs.openssl.org/3.5/man1/openssl-s_client/).
@@ -506,6 +724,23 @@ openssl s_client -connect "$IP_VM:$PORTA_HTTPS" -servername "$NOME_SITE" \
 
 **Contexto: VM do posto, intervenção do formador · 30 min · reposição às 11:45.**
 
+### Pré-verificação de T6
+
+**Executar: VM Ubuntu do posto, antes de introduzir cada falha.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    sudo nginx -t
+    systemctl is-active --quiet nginx
+    sudo test -s "$NGINX_INCLUDE"
+    sudo test -s "$WEB_ROOT/estado.html"
+    teste_https >/dev/null
+)
+```
+
 Antes de cada falha, confirma o HTTPS saudável. Introduz a seguinte apenas depois de validar a anterior.
 
 ### Falha 1: ficheiro sem leitura para o serviço
@@ -513,8 +748,12 @@ Antes de cada falha, confirma o HTTPS saudável. Introduz a seguinte apenas depo
 Injeção pelo formador:
 
 ```bash
-sudo chmod 0600 "$WEB_ROOT/estado.html"
-codigo_https
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo chmod 0600 "$WEB_ROOT/estado.html"
+    codigo_https
+}
 ```
 
 **Sintoma esperado:** `403` no ficheiro de estado. A página inicial pode continuar a funcionar.
@@ -522,11 +761,15 @@ codigo_https
 Diagnóstico e resolução:
 
 ```bash
-sudo tail -n 20 "$ERROR_LOG"
-namei -l "$WEB_ROOT/estado.html"
-sudo chmod 0644 "$WEB_ROOT/estado.html"
-teste_https
-codigo_https
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo tail -n 20 "$ERROR_LOG"
+    namei -l "$WEB_ROOT/estado.html"
+    sudo chmod 0644 "$WEB_ROOT/estado.html"
+    teste_https
+    codigo_https
+}
 ```
 
 **Evidência:** erro de acesso negado no log e modo `0600`; recuperação com `0644`, código `200` e conteúdo correto. Não é necessário reiniciar a VM nem recriar o site.
@@ -536,8 +779,12 @@ codigo_https
 1. Guarda a configuração saudável e abre o ficheiro dedicado:
 
 ```bash
-sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t6-2"
-sudoedit "$NGINX_INCLUDE"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t6-2"
+    sudoedit "$NGINX_INCLUDE"
+}
 ```
 
 2. No bloco HTTPS, altera apenas `root` para um caminho inexistente, mantendo a sintaxe. Valida e aplica:
@@ -552,16 +799,24 @@ codigo_https
 3. O formando deve relacionar o caminho do log com a configuração efetiva:
 
 ```bash
-sudo tail -n 20 "$ERROR_LOG"
-sudo nginx -T
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo tail -n 20 "$ERROR_LOG"
+    sudo nginx -T
+}
 ```
 
 4. Corrige apenas `root` para `WEB_ROOT`, valida e aplica. Para reversão imediata pelo formador, repõe a cópia saudável:
 
 ```bash
-sudo cp -a "${NGINX_INCLUDE}.antes-t6-2" "$NGINX_INCLUDE"
-sudo nginx -t && sudo systemctl reload nginx
-teste_https
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo cp -a "${NGINX_INCLUDE}.antes-t6-2" "$NGINX_INCLUDE"
+    sudo nginx -t && sudo systemctl reload nginx
+    teste_https
+}
 ```
 
 ### Extensão: reverse proxy e erro 502
@@ -577,10 +832,14 @@ location /app/ {
 Adapta a porta ao `PORTA_BACKEND` confirmado. Aplica com `nginx -t` e testa `teste_https /app/`. Quando estiver funcional:
 
 ```bash
-sudo docker compose -f "$COMPOSE_CP4" stop app
-codigo_https /app/
-sudo tail -n 20 "$ERROR_LOG"
-sudo docker compose -f "$COMPOSE_CP4" up -d app
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo docker compose -f "$COMPOSE_CP4" stop app
+    codigo_https /app/
+    sudo tail -n 20 "$ERROR_LOG"
+    sudo docker compose -f "$COMPOSE_CP4" up -d app
+}
 ```
 
 **Esperado:** `502` enquanto o backend estiver parado, com indicação de ligação recusada no log; recuperação após o arranque do backend. Aguarda o arranque e repete `teste_https /app/` até confirmar o conteúdo. Preserva os dados do volume.
@@ -591,15 +850,39 @@ sudo docker compose -f "$COMPOSE_CP4" up -d app
 
 **Contexto: VM do posto · 45 min.**
 
+### Pré-verificação de T7
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v restic
+    command -v openssl
+    sudo test -d "$WEB_ROOT"
+    sudo test -d /etc/nginx
+    VOLUME_ATUAL=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}')
+    [[ "$VOLUME_ATUAL" == "$VOLUME_CP4_PATH" ]] || { echo 'A localização do volume mudou; atualizar a ficha antes do backup.' >&2; exit 1; }
+    sudo test -d "$VOLUME_CP4_PATH"
+    mountpoint -q "$PONTO_REPO" || { echo 'O disco de backup não está montado; concluir a preparação.' >&2; exit 1; }
+)
+```
+
 1. Confirma a ferramenta, a origem CP4 e o disco de destino:
 
 ```bash
-command -v restic
-restic version
-VOLUME_CP4_PATH=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}')
-sudo test -d "$VOLUME_CP4_PATH"
-findmnt "$PONTO_REPO"
-mountpoint -q "$PONTO_REPO"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    command -v restic
+    restic version
+    VOLUME_CP4_PATH=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}')
+    sudo test -d "$VOLUME_CP4_PATH"
+    findmnt "$PONTO_REPO"
+    mountpoint -q "$PONTO_REPO"
+}
 ```
 
 Se o destino previsto não estiver montado, corrige a preparação antes de criar o repositório. Este percurso usa três origens: conteúdo web, `/etc/nginx` e volume CP4. `DIR_TLS` deve estar dentro da configuração Nginx, como é verificado no modelo de parâmetros.
@@ -608,7 +891,9 @@ Se o destino previsto não estiver montado, corrige a preparação antes de cria
 
 ```bash
 (
-    set -eo pipefail
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
     if sudo test -f "$REPO/config" && ! sudo test -s "$PWFILE"; then
         echo 'Repositório existente sem segredo disponível: recuperar a cópia de custódia.' >&2
         exit 1
@@ -628,15 +913,23 @@ Conserva uma cópia de custódia pelo canal preparado pelo formador. Regista ape
 3. Inicializa, se for um repositório novo, e faz o backup:
 
 ```bash
-sudo install -d -o root -g root -m 0700 "$REPO"
-if ! sudo test -f "$REPO/config"; then
-    restic_lab init
-fi
-
-restic_lab backup "$WEB_ROOT" /etc/nginx "$VOLUME_CP4_PATH" --tag sessao-final
-restic_lab snapshots
-restic_lab ls latest
-restic_lab check
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    mountpoint -q "$PONTO_REPO"
+    sudo test -s "$PWFILE"
+    sudo test -d "$WEB_ROOT"
+    sudo test -d "$VOLUME_CP4_PATH"
+    sudo install -d -o root -g root -m 0700 "$REPO"
+    if ! sudo test -f "$REPO/config"; then
+        restic_lab init
+    fi
+    restic_lab backup "$WEB_ROOT" /etc/nginx "$VOLUME_CP4_PATH" --tag sessao-final
+    restic_lab snapshots
+    restic_lab ls latest
+    restic_lab check
+)
 ```
 
 **Validar:** ID do snapshot registado, três conjuntos visíveis e `check` sem erros. Os dados CP4 deste ensaio são ficheiros didáticos; um serviço com base de dados exigiria um procedimento de consistência próprio.
@@ -647,18 +940,38 @@ restic_lab check
 
 **Contexto: VM do posto, como utilizador comum com sudo · 15 min.**
 
+### Pré-verificação de T8
+
+**Executar: VM Ubuntu do posto, como utilizador comum.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    [[ $(id -u) -ne 0 ]] || { echo 'T8 deve testar a conta comum, não uma shell root.' >&2; exit 1; }
+    sudo test -f "$REPO/config"
+    sudo test -s "$PWFILE"
+    restic_lab snapshots >/dev/null
+)
+```
+
 1. Confirma donos/permissões e testa o acesso sem elevação:
 
 ```bash
-id
-sudo ls -ld "$PONTO_REPO" "$REPO"
-sudo ls -l "$PWFILE"
-if test -r "$PWFILE"; then
-    echo 'O utilizador comum consegue ler o segredo: corrigir'
-else
-    echo 'Leitura do segredo negada ao utilizador comum'
-fi
-ls "$REPO"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    id
+    sudo ls -ld "$PONTO_REPO" "$REPO"
+    sudo ls -l "$PWFILE"
+    if test -r "$PWFILE"; then
+        echo 'O utilizador comum consegue ler o segredo: corrigir'
+    else
+        echo 'Leitura do segredo negada ao utilizador comum'
+    fi
+    ls "$REPO"
+}
 ```
 
 **Esperado:** dono administrativo, segredo `0600`, acesso negado ao utilizador comum. Este teste não deve ser executado numa shell root: o root é a identidade administrativa que tem de conseguir recuperar o backup.
@@ -666,12 +979,16 @@ ls "$REPO"
 2. Verifica que um segredo errado é recusado:
 
 ```bash
-PW_ERRADA=$(mktemp "$HOME/pw-errada.XXXXXX")
-printf '%s\n' 'palavra-passe-incorreta-de-ensaio' > "$PW_ERRADA"
-sudo restic --repo "$REPO" --password-file "$PW_ERRADA" snapshots
-RESULTADO_ERRADO=$?
-printf 'Código de saída com segredo errado: %s\n' "$RESULTADO_ERRADO"
-rm -- "$PW_ERRADA"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    PW_ERRADA=$(mktemp "$HOME/pw-errada.XXXXXX")
+    printf '%s\n' 'palavra-passe-incorreta-de-ensaio' > "$PW_ERRADA"
+    sudo restic --repo "$REPO" --password-file "$PW_ERRADA" snapshots
+    RESULTADO_ERRADO=$?
+    printf 'Código de saída com segredo errado: %s\n' "$RESULTADO_ERRADO"
+    rm -- "$PW_ERRADA"
+}
 ```
 
 **Esperado:** código diferente de zero e falha de abertura. Confirma depois que `restic_lab snapshots` continua a funcionar com o ficheiro correto.
@@ -682,14 +999,34 @@ rm -- "$PW_ERRADA"
 
 **Contexto: VM do posto · 15 min.**
 
+### Pré-verificação de T9
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v restic
+    sudo test -s "$WEB_ROOT/index.html"
+    sudo test -f "$REPO/config"
+    restic_lab snapshots >/dev/null
+)
+```
+
 1. Cria mais dois snapshots do mesmo conjunto de caminhos:
 
 ```bash
-printf 'versao 2 - %s\n' "$(date --iso-8601=seconds)" | sudo tee -a "$WEB_ROOT/index.html" >/dev/null
-restic_lab backup "$WEB_ROOT" /etc/nginx "$VOLUME_CP4_PATH" --tag sessao-final
-printf 'versao 3 - %s\n' "$(date --iso-8601=seconds)" | sudo tee -a "$WEB_ROOT/index.html" >/dev/null
-restic_lab backup "$WEB_ROOT" /etc/nginx "$VOLUME_CP4_PATH" --tag sessao-final
-restic_lab snapshots --tag sessao-final
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    printf 'versao 2 - %s\n' "$(date --iso-8601=seconds)" | sudo tee -a "$WEB_ROOT/index.html" >/dev/null
+    restic_lab backup "$WEB_ROOT" /etc/nginx "$VOLUME_CP4_PATH" --tag sessao-final
+    printf 'versao 3 - %s\n' "$(date --iso-8601=seconds)" | sudo tee -a "$WEB_ROOT/index.html" >/dev/null
+    restic_lab backup "$WEB_ROOT" /etc/nginx "$VOLUME_CP4_PATH" --tag sessao-final
+    restic_lab snapshots --tag sessao-final
+}
 ```
 
 2. Pede a previsão antes de simular:
@@ -707,12 +1044,37 @@ As regras são aplicadas por grupos e pelo histórico disponível, não criam sn
 
 **Contexto: VM do posto · 25 min.**
 
+### Pré-verificação de T10
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v restic
+    command -v systemd-analyze
+    mountpoint -q "$PONTO_REPO"
+    sudo test -f "$REPO/config"
+    sudo test -s "$PWFILE"
+    sudo test -d "$WEB_ROOT"
+    sudo test -d "$VOLUME_CP4_PATH"
+    systemd-analyze calendar "$CALENDARIO"
+    restic_lab snapshots >/dev/null
+)
+```
+
 1. Confirma executável, origem CP4 e calendário:
 
 ```bash
-RESTIC=$(command -v restic)
-VOLUME_CP4_PATH=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}')
-systemd-analyze calendar "$CALENDARIO"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    RESTIC=$(command -v restic)
+    VOLUME_CP4_PATH=$(sudo docker volume inspect "$VOLUME_CP4" --format '{{.Mountpoint}}')
+    systemd-analyze calendar "$CALENDARIO"
+}
 ```
 
 2. Cria os modelos com os valores do posto:
@@ -757,12 +1119,34 @@ WantedBy=timers.target
 Guarda o ficheiro e fecha o editor antes de executar os próximos comandos.
 
 ```bash
-sudo install -o root -g root -m 0644 "$HOME/backup-sessao.service" /etc/systemd/system/backup-sessao.service
-sudo install -o root -g root -m 0644 "$HOME/backup-sessao.timer" /etc/systemd/system/backup-sessao.timer
-sudo systemd-analyze verify /etc/systemd/system/backup-sessao.service /etc/systemd/system/backup-sessao.timer
-sudo systemctl daemon-reload
-sudo systemctl enable --now backup-sessao.timer
-sudo systemctl start backup-sessao.service
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    test -s "$HOME/backup-sessao.service"
+    test -s "$HOME/backup-sessao.timer"
+    if grep -nE '@[A-Z0-9_]+@' "$HOME/backup-sessao.service" "$HOME/backup-sessao.timer"; then
+        echo 'Preencher os modelos systemd antes de os instalar.' >&2
+        exit 1
+    fi
+    mountpoint -q "$PONTO_REPO"
+    sudo test -s "$PWFILE"
+    sudo test -d "$WEB_ROOT"
+    sudo test -d "$VOLUME_CP4_PATH"
+    restic_lab snapshots >/dev/null
+    systemd-analyze calendar "$CALENDARIO"
+    sudo systemd-analyze verify "$HOME/backup-sessao.service" "$HOME/backup-sessao.timer"
+    for unidade in backup-sessao.service backup-sessao.timer; do
+        if sudo test -e "/etc/systemd/system/$unidade"; then
+            sudo cp -a "/etc/systemd/system/$unidade" "/etc/systemd/system/$unidade.antes-t10-$(date +%Y%m%d%H%M%S)"
+        fi
+    done
+    sudo install -o root -g root -m 0644 "$HOME/backup-sessao.service" /etc/systemd/system/backup-sessao.service
+    sudo install -o root -g root -m 0644 "$HOME/backup-sessao.timer" /etc/systemd/system/backup-sessao.timer
+    sudo systemctl daemon-reload
+    sudo systemctl start backup-sessao.service
+    sudo systemctl enable --now backup-sessao.timer
+)
 ```
 
 3. Demonstra agendamento e execução:
@@ -782,20 +1166,52 @@ restic_lab snapshots --tag timer
 
 **Contexto: VM do posto · 35 min · reposição às 15:00.**
 
+### Pré-verificação de T11
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v sha256sum
+    sudo test -d "$WEB_ROOT"
+    sudo test -f "$REPO/config"
+    restic_lab snapshots >/dev/null
+    teste_https >/dev/null
+)
+```
+
 1. Cria o ficheiro de teste, faz backup e escolhe explicitamente o snapshot:
 
 ```bash
-printf 'RESTAURO-%s-%s\n' "$POSTO" "$(date --iso-8601=seconds)" \
-    | sudo tee "$WEB_ROOT/teste-restauro.html" >/dev/null
-restic_lab backup "$WEB_ROOT" --tag teste-restauro
-restic_lab snapshots --tag teste-restauro
-read -r -p 'ID do snapshot que acabaste de criar: ' ID_TESTE
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    printf 'RESTAURO-%s-%s\n' "$POSTO" "$(date --iso-8601=seconds)" \
+        | sudo tee "$WEB_ROOT/teste-restauro.html" >/dev/null
+    restic_lab backup "$WEB_ROOT" --tag teste-restauro
+    HASH_TESTE=$(sudo sha256sum "$WEB_ROOT/teste-restauro.html" | awk '{print $1}')
+    restic_lab snapshots --tag teste-restauro
+    read -r -p 'ID do snapshot que acabaste de criar: ' ID_TESTE
+}
 ```
 
 Regista o ID na folha. Confirma que esse snapshot contém o ficheiro antes de simular a perda:
 
 ```bash
-restic_lab ls "${ID_TESTE:?Indicar o ID do snapshot}" "$WEB_ROOT/teste-restauro.html"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    : "${ID_TESTE:?Indicar o ID do snapshot}"
+    : "${HASH_TESTE:?Registar o hash do ficheiro antes da perda}"
+    [[ "$ID_TESTE" =~ ^[0-9a-fA-F]{8,64}$ ]] || { echo 'Indicar um ID de snapshot válido, sem marcadores.' >&2; exit 1; }
+    restic_lab ls "$ID_TESTE" "$WEB_ROOT/teste-restauro.html"
+    HASH_SNAPSHOT=$(restic_lab dump "$ID_TESTE" "$WEB_ROOT/teste-restauro.html" | sha256sum | awk '{print $1}')
+    [[ "$HASH_SNAPSHOT" == "$HASH_TESTE" ]] || { echo 'O snapshot não corresponde à referência; não simular a perda.' >&2; exit 1; }
+)
 ```
 
 2. Simula a perda apenas do ficheiro de teste e mede o início:
@@ -803,7 +1219,16 @@ restic_lab ls "${ID_TESTE:?Indicar o ID do snapshot}" "$WEB_ROOT/teste-restauro.
 ```bash
 INICIO_RESTAURO=$(date +%s)
 date --iso-8601=seconds
-sudo rm -- "$WEB_ROOT/teste-restauro.html"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    : "${ID_TESTE:?Selecionar primeiro o snapshot}"
+    : "${HASH_TESTE:?Registar primeiro o hash de referência}"
+    HASH_SNAPSHOT=$(restic_lab dump "$ID_TESTE" "$WEB_ROOT/teste-restauro.html" | sha256sum | awk '{print $1}')
+    [[ "$HASH_SNAPSHOT" == "$HASH_TESTE" ]] || exit 1
+    sudo mv -- "$WEB_ROOT/teste-restauro.html" "$HOME/teste-restauro-retido-$(date +%Y%m%d%H%M%S).html"
+) &&
 codigo_https /teste-restauro.html
 ```
 
@@ -812,11 +1237,15 @@ codigo_https /teste-restauro.html
 3. Restaura para uma área privada nova:
 
 ```bash
-STAGING=$(sudo mktemp -d /tmp/adm-restauro.XXXXXX)
-restic_lab restore "${ID_TESTE:?Indicar o ID do snapshot}" \
-    --target "$STAGING" --include "$WEB_ROOT/teste-restauro.html"
-sudo stat "$STAGING$WEB_ROOT/teste-restauro.html"
-sudo cat "$STAGING$WEB_ROOT/teste-restauro.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    STAGING=$(sudo mktemp -d /tmp/adm-restauro.XXXXXX)
+    restic_lab restore "${ID_TESTE:?Indicar o ID do snapshot}" \
+        --target "$STAGING" --include "$WEB_ROOT/teste-restauro.html" &&
+    sudo stat "$STAGING$WEB_ROOT/teste-restauro.html" &&
+    sudo cat "$STAGING$WEB_ROOT/teste-restauro.html"
+}
 ```
 
 O caminho absoluto original aparece abaixo do destino de staging. A opção `--include` limita os dados extraídos; não restaura diretamente sobre a origem. [Restauro seletivo no Restic](https://restic.readthedocs.io/en/stable/050_restore.html)
@@ -824,8 +1253,18 @@ O caminho absoluto original aparece abaixo do destino de staging. A opção `--i
 4. Compara o conteúdo com o registo e promove apenas o ficheiro pretendido:
 
 ```bash
-sudo install -o root -g root -m 0644 \
-    "$STAGING$WEB_ROOT/teste-restauro.html" "$WEB_ROOT/teste-restauro.html"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    : "${STAGING:?Criar primeiro uma pasta nova de staging}"
+    : "${HASH_TESTE:?Falta a referência do conteúdo original}"
+    case "$STAGING" in /tmp/adm-restauro.??????) ;; *) echo 'Staging inesperado; promoção cancelada.' >&2; exit 1 ;; esac
+    sudo test -s "$STAGING$WEB_ROOT/teste-restauro.html"
+    HASH_RESTAURADO=$(sudo sha256sum "$STAGING$WEB_ROOT/teste-restauro.html" | awk '{print $1}')
+    [[ "$HASH_RESTAURADO" == "$HASH_TESTE" ]] || { echo 'Hash do restauro diferente; ficheiro não promovido.' >&2; exit 1; }
+    sudo install -o root -g root -m 0644 "$STAGING$WEB_ROOT/teste-restauro.html" "$WEB_ROOT/teste-restauro.html"
+) &&
 if teste_https /teste-restauro.html; then
     FIM_RESTAURO=$(date +%s)
     date --iso-8601=seconds
@@ -837,7 +1276,7 @@ codigo_https /teste-restauro.html
 5. Depois de validar, limpa apenas a pasta temporária criada neste ensaio:
 
 ```bash
-case "$STAGING" in
+case "${STAGING:-}" in
     /tmp/adm-restauro.??????) sudo rm -rf -- "$STAGING" ;;
     *) echo 'Caminho de staging inesperado: confirmar antes de limpar.' ;;
 esac
@@ -848,6 +1287,23 @@ esac
 ## T12 — Host no Zabbix
 
 **Contextos: VM do posto e browser do Windows · 25 min.**
+
+### Pré-verificação de T12
+
+**Executar: VM Ubuntu do posto; o teste zabbix_get tem outro contexto indicado abaixo.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    sudo zabbix_agent2 -V
+    systemctl is-active --quiet zabbix-agent2
+    sudo test -s "$PSK_FILE"
+    sudo ss -ltnp 'sport = :10050'
+    sudo ufw status
+)
+```
 
 1. Na VM do posto, confirma o agente e a exposição:
 
@@ -889,9 +1345,17 @@ sudo journalctl -u zabbix-agent2 --since '-15 min' --no-pager
 Se a instalação usar um ficheiro de log próprio, consulta também esse destino. Para testar diretamente, **na VM Zabbix**, com os parâmetros privados e a cópia correta do segredo:
 
 ```bash
-sudo zabbix_get -s "$IP_VM" -k agent.ping \
-    --tls-connect psk --tls-psk-identity "$IDENTIFICADOR_PUBLICO" \
-    --tls-psk-file "$PSK_TESTE_ZABBIX"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    : "${PSK_TESTE_ZABBIX:?Indicar o ficheiro privado da PSK deste posto no servidor Zabbix}"
+    command -v zabbix_get
+    sudo test -s "$PSK_TESTE_ZABBIX"
+    sudo zabbix_get -s "$IP_VM" -k agent.ping \
+        --tls-connect psk --tls-psk-identity "$IDENTIFICADOR_PUBLICO" \
+        --tls-psk-file "$PSK_TESTE_ZABBIX"
+)
 ```
 
 **Esperado:** `1`. Este teste é complementar à observação de métricas recentes no frontend. [PSK no Zabbix 7.0](https://www.zabbix.com/documentation/7.0/en/manual/encryption/using_pre_shared_keys)
@@ -900,14 +1364,34 @@ sudo zabbix_get -s "$IP_VM" -k agent.ping \
 
 **Contextos: VM Zabbix e browser do Windows · 25 min · reposição às 15:50.**
 
+### Pré-verificação de T13
+
+**Executar: VM do servidor Zabbix, com a ficha do posto que será monitorizado.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v curl
+    command -v openssl
+    command -v getent
+    getent hosts "$NOME_SITE"
+)
+```
+
 ### A. Confirmar o pedido a partir do servidor que o vai executar
 
 Na VM Zabbix, confirma que o nome do site resolve para o posto e que a CA preparada está instalada como confiável:
 
 ```bash
-getent hosts "$NOME_SITE"
-curl --fail --silent --show-error --max-time 10 \
-    "https://${NOME_SITE}:${PORTA_HTTPS}/estado.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    getent hosts "$NOME_SITE"
+    curl --fail --silent --show-error --max-time 10 \
+        "https://${NOME_SITE}:${PORTA_HTTPS}/estado.html"
+}
 ```
 
 Se o nome não resolver corretamente, revê apenas a entrada correspondente em `/etc/hosts` ou o registo DNS preparado. A linha tem o endereço do posto e o nome atribuído, separados por espaço. Repete `getent hosts` e confirma o destino.
@@ -915,18 +1399,43 @@ Se o nome não resolver corretamente, revê apenas a entrada correspondente em `
 Se a CA não for reconhecida, copia o **certificado público** da CA já usada na sessão. Na **máquina do formador / Proxmox**:
 
 ```bash
-scp -i "$CHAVE_SSH_FORMADOR" "$CA_CERT_FORMADOR" \
-    "$ALUNO@$IP_ZABBIX:/home/$ALUNO/ca-lab.crt"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    [[ -d /etc/pve ]] || { echo 'Executar no Proxmox que guarda a CA.' >&2; exit 1; }
+    : "${CHAVE_SSH_FORMADOR:?Preencher CHAVE_SSH_FORMADOR}"
+    : "${CA_CERT_FORMADOR:?Preencher CA_CERT_FORMADOR}"
+    : "${ALUNO:?Preencher ALUNO}"
+    test -r "$CHAVE_SSH_FORMADOR"
+    openssl x509 -in "$CA_CERT_FORMADOR" -noout
+    if grep -q 'PRIVATE KEY' "$CA_CERT_FORMADOR"; then
+        echo 'Enviar apenas o certificado público da CA.' >&2
+        exit 1
+    fi
+    scp -i "$CHAVE_SSH_FORMADOR" "$CA_CERT_FORMADOR" \
+        "$ALUNO@$IP_ZABBIX:/home/$ALUNO/ca-lab.crt"
+)
 ```
 
 Na **VM Zabbix**, instala-o no armazém de confiança e repete o pedido:
 
 ```bash
-sudo install -o root -g root -m 0644 "$HOME/ca-lab.crt" \
-    /usr/local/share/ca-certificates/ca-lab.crt
-sudo update-ca-certificates
-curl --fail --silent --show-error --max-time 10 \
-    "https://${NOME_SITE}:${PORTA_HTTPS}/estado.html"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    openssl x509 -in "$HOME/ca-lab.crt" -noout
+    if sudo test -e /usr/local/share/ca-certificates/ca-lab.crt; then
+        sudo cp -a /usr/local/share/ca-certificates/ca-lab.crt \
+            "/usr/local/share/ca-certificates/ca-lab.crt.antes-t13-$(date +%Y%m%d%H%M%S)"
+    fi
+    sudo install -o root -g root -m 0644 "$HOME/ca-lab.crt" \
+        /usr/local/share/ca-certificates/ca-lab.crt
+    sudo update-ca-certificates
+    curl --fail --silent --show-error --max-time 10 \
+        "https://${NOME_SITE}:${PORTA_HTTPS}/estado.html"
+)
 ```
 
 A chave privada da CA permanece na máquina do formador. O nome deve estar resolvido no servidor Zabbix; um `--resolve` usado apenas no PC não corrige a resolução do cenário.
@@ -972,6 +1481,21 @@ Se o critério aprovado for uma média na janela, usa a função correspondente 
 
 **Contextos: VM do posto e browser do Windows · 25 min.**
 
+### Pré-verificação de T14
+
+**Executar: VM Ubuntu do posto, antes de parar o serviço.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    sudo nginx -t
+    systemctl is-active --quiet nginx
+    teste_https >/dev/null
+)
+```
+
 1. Na VM do posto, regista a hora e provoca a paragem:
 
 ```bash
@@ -997,13 +1521,33 @@ codigo_https
 
 **Contexto: VM do posto e browser do Windows · 20 min.**
 
+### Pré-verificação de T15
+
+**Executar: VM Ubuntu do posto; o serviço pode estar parado durante o diagnóstico.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v journalctl
+    sudo test -f "$ACCESS_LOG"
+    sudo test -f "$ERROR_LOG"
+    systemctl cat nginx >/dev/null
+)
+```
+
 1. Localiza os eventos no período da tarefa:
 
 ```bash
-sudo journalctl -u nginx --since '-30 min' --no-pager
-sudo tail -n 30 "$ACCESS_LOG"
-sudo tail -n 30 "$ERROR_LOG"
-sudo journalctl -u ssh --since today --no-pager
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo journalctl -u nginx --since '-30 min' --no-pager
+    sudo tail -n 30 "$ACCESS_LOG"
+    sudo tail -n 30 "$ERROR_LOG"
+    sudo journalctl -u ssh --since today --no-pager
+}
 ```
 
 2. Seleciona a paragem/arranque do Nginx, um pedido do cenário Zabbix e um acesso SSH. Em Ubuntu, a unidade do serviço SSH é normalmente `ssh`.
@@ -1017,6 +1561,24 @@ sudo journalctl -u ssh --since today --no-pager
 
 **Contextos: intervenção do formador na VM do posto; diagnóstico pelo formando · 40 min.**
 
+### Pré-verificação de T16
+
+**Executar: VM Ubuntu do posto, antes de escolher e introduzir um cenário.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    sudo nginx -t
+    systemctl is-active --quiet nginx
+    sudo test -s "$WEB_ROOT/estado.html"
+    sudo test -s "$NGINX_INCLUDE"
+    restic_lab snapshots >/dev/null
+    teste_https >/dev/null
+)
+```
+
 Escolhe um cenário por posto. Confirma o serviço saudável, snapshot utilizável, acesso ao segredo e possibilidade de reversão antes de introduzir a falha. Dá uma pista às 17:05 se necessário; às 17:10, repõe o serviço e analisa o raciocínio em conjunto.
 
 ### Cenário A — Permissão do diretório
@@ -1024,8 +1586,12 @@ Escolhe um cenário por posto. Confirma o serviço saudável, snapshot utilizáv
 Injeção:
 
 ```bash
-sudo chmod 0700 "$WEB_ROOT"
-codigo_https
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo chmod 0700 "$WEB_ROOT"
+    codigo_https
+}
 ```
 
 **Esperado:** `403`, erro de acesso negado e ausência de travessia para a conta de serviço.
@@ -1033,10 +1599,14 @@ codigo_https
 Resolução e reversão:
 
 ```bash
-namei -l "$WEB_ROOT/estado.html"
-sudo tail -n 20 "$ERROR_LOG"
-sudo chmod 0755 "$WEB_ROOT"
-teste_https
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    namei -l "$WEB_ROOT/estado.html"
+    sudo tail -n 20 "$ERROR_LOG"
+    sudo chmod 0755 "$WEB_ROOT"
+    teste_https
+}
 ```
 
 **Backup necessário?** Não: os dados continuam presentes; a causa é a permissão do diretório. Restaurar conteúdo não é a ação mínima.
@@ -1046,8 +1616,12 @@ teste_https
 Guarda uma cópia íntegra e introduz deliberadamente uma diretiva inexistente:
 
 ```bash
-sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t16b"
-sudo nano "$NGINX_INCLUDE"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo cp -a "$NGINX_INCLUDE" "${NGINX_INCLUDE}.antes-t16b"
+    sudo nano "$NGINX_INCLUDE"
+}
 ```
 
 **Linha a acrescentar no fim do ficheiro de configuração:**
@@ -1075,9 +1649,13 @@ sudo nginx -t
 **Ação mínima do formando:** remover apenas a diretiva inválida, validar e iniciar. Para reversão imediata pelo formador:
 
 ```bash
-sudo cp -a "${NGINX_INCLUDE}.antes-t16b" "$NGINX_INCLUDE"
-sudo nginx -t && sudo systemctl start nginx
-teste_https
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo cp -a "${NGINX_INCLUDE}.antes-t16b" "$NGINX_INCLUDE"
+    sudo nginx -t && sudo systemctl start nginx
+    teste_https
+}
 ```
 
 **Backup necessário?** Não necessariamente: a alteração pontual é identificável e a configuração anterior foi conservada.
@@ -1087,15 +1665,36 @@ teste_https
 Antes da injeção, seleciona um snapshot de T7–T10 que contenha o ficheiro de estado. Não uses por engano o snapshot de T11 que só contém o ficheiro de teste.
 
 ```bash
-restic_lab snapshots --tag sessao-final
-read -r -p 'ID de um snapshot que contenha o ficheiro de estado: ' ID_INCIDENTE
-restic_lab ls "${ID_INCIDENTE:?Indicar o snapshot}" "$WEB_ROOT/estado.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    restic_lab snapshots --tag sessao-final
+    read -r -p 'ID de um snapshot que contenha o ficheiro de estado: ' ID_INCIDENTE
+    HASH_ESTADO=$(sudo sha256sum "$WEB_ROOT/estado.html" | awk '{print $1}')
+    (
+        set -euo pipefail
+        : "${ID_INCIDENTE:?Indicar o snapshot}"
+        [[ "$ID_INCIDENTE" =~ ^[0-9a-fA-F]{8,64}$ ]] || exit 1
+        restic_lab ls "$ID_INCIDENTE" "$WEB_ROOT/estado.html"
+        HASH_SNAPSHOT=$(restic_lab dump "$ID_INCIDENTE" "$WEB_ROOT/estado.html" | sha256sum | awk '{print $1}')
+        [[ "$HASH_SNAPSHOT" == "$HASH_ESTADO" ]] || { echo 'Snapshot sem a referência atual; não introduzir a falha.' >&2; exit 1; }
+    )
+}
 ```
 
 Depois de conferir o ficheiro e os acessos de recuperação, o formador simula a perda:
 
 ```bash
-sudo rm -- "$WEB_ROOT/estado.html"
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    : "${ID_INCIDENTE:?Selecionar um snapshot antes da falha}"
+    : "${HASH_ESTADO:?Guardar o hash de referência}"
+    HASH_SNAPSHOT=$(restic_lab dump "$ID_INCIDENTE" "$WEB_ROOT/estado.html" | sha256sum | awk '{print $1}')
+    [[ "$HASH_SNAPSHOT" == "$HASH_ESTADO" ]] || exit 1
+    sudo mv -- "$WEB_ROOT/estado.html" "$HOME/estado-retido-${POSTO}-$(date +%Y%m%d%H%M%S).html"
+) &&
 codigo_https
 ```
 
@@ -1104,21 +1703,35 @@ codigo_https
 Resolução:
 
 ```bash
-sudo tail -n 20 "$ERROR_LOG"
-STAGING_INCIDENTE=$(sudo mktemp -d /tmp/adm-incidente.XXXXXX)
-restic_lab restore "${ID_INCIDENTE:?Indicar o snapshot}" \
-    --target "$STAGING_INCIDENTE" --include "$WEB_ROOT/estado.html"
-sudo cat "$STAGING_INCIDENTE$WEB_ROOT/estado.html"
-sudo stat "$STAGING_INCIDENTE$WEB_ROOT/estado.html"
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    sudo tail -n 20 "$ERROR_LOG"
+    STAGING_INCIDENTE=$(sudo mktemp -d /tmp/adm-incidente.XXXXXX)
+    restic_lab restore "${ID_INCIDENTE:?Indicar o snapshot}" \
+        --target "$STAGING_INCIDENTE" --include "$WEB_ROOT/estado.html" &&
+    sudo cat "$STAGING_INCIDENTE$WEB_ROOT/estado.html" &&
+    sudo stat "$STAGING_INCIDENTE$WEB_ROOT/estado.html"
+}
 ```
 
 Confirma o marcador do posto e só depois promove:
 
 ```bash
-sudo install -o root -g root -m 0644 \
-    "$STAGING_INCIDENTE$WEB_ROOT/estado.html" "$WEB_ROOT/estado.html"
-teste_https
-codigo_https
+(
+    set -euo pipefail
+    source "$HOME/parametros-posto.sh"
+    validar_parametros
+    : "${STAGING_INCIDENTE:?Criar um staging novo para o incidente}"
+    : "${HASH_ESTADO:?Falta a referência de conteúdo}"
+    case "$STAGING_INCIDENTE" in /tmp/adm-incidente.??????) ;; *) echo 'Staging inesperado.' >&2; exit 1 ;; esac
+    sudo test -s "$STAGING_INCIDENTE$WEB_ROOT/estado.html"
+    HASH_RESTAURADO=$(sudo sha256sum "$STAGING_INCIDENTE$WEB_ROOT/estado.html" | awk '{print $1}')
+    [[ "$HASH_RESTAURADO" == "$HASH_ESTADO" ]] || { echo 'Restauro diferente da referência; promoção cancelada.' >&2; exit 1; }
+    sudo install -o root -g root -m 0644 "$STAGING_INCIDENTE$WEB_ROOT/estado.html" "$WEB_ROOT/estado.html"
+    teste_https
+    codigo_https
+)
 ```
 
 **Backup necessário?** Sim, neste cenário o formando deve exercitar o percurso de recuperação do conteúdo perdido. Se for preciso um desbloqueio pelo formador, pode ser fornecida uma cópia de referência identificada; isso deve ficar registado como apoio.
@@ -1144,6 +1757,22 @@ esac
 ## T17 — Fecho e entrega
 
 **Contextos: VM do posto, browser do Windows e registo do formador · 15 min.**
+
+### Pré-verificação de T17
+
+**Executar: VM Ubuntu do posto.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+(
+    set -euo pipefail
+    command -v systemctl
+    sudo test -f /etc/systemd/system/backup-sessao.timer
+    sudo test -f /etc/systemd/system/backup-sessao.service
+    restic_lab snapshots >/dev/null
+)
+```
 
 1. Desativa o agendamento de treino e confirma o estado:
 
@@ -1184,7 +1813,11 @@ restic_lab snapshots
 Se os scripts privados do laboratório estiverem disponíveis, o formador pode executar na **sua máquina / Proxmox**, com os parâmetros certos:
 
 ```bash
-bash "$LAB_FORMADOR/formador.sh" remoto "$POSTO" verificar
+source "$HOME/parametros-posto.sh" &&
+validar_parametros &&
+{
+    bash "$LAB_FORMADOR/formador.sh" remoto "$POSTO" verificar
+}
 ```
 
 Os pontos suportados pelo script privado são `repor cp4`, `repor http`, `repor https`, `repor t6`, `repor backup` e `repor servico`. Não executes a lista inteira: escolhe apenas a reposição necessária, regista-a e volta a validar o resultado. Para o host de reserva, usa o frontend ou o procedimento preparado na VM Zabbix.

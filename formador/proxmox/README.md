@@ -73,6 +73,8 @@ O script verifica o SHA256 da imagem cloud oficial e a disponibilidade do VMID. 
 
 A preparação comum guarda a configuração privada antiga em `/var/lib/adm-srv-posto/migracao-*`, para apenas os contentores do projeto antigo e conserva todos os volumes. Copia os dados do volume antigo para `cp4_dados`, verificando hashes. Se o destino já contiver dados diferentes, interrompe sem os sobrepor. Os backups cifrados antigos ficam no respetivo volume, com o segredo conservado na cópia de configuração.
 
+Quando a cópia inicial termina, um marcador associa a migração à identidade do volume de destino. Repetições conservam os dados atuais e os trabalhos da aula. O registo de conclusão da primeira versão comum também permite reconhecer a migração já efetuada. Um volume substituído exige revisão antes de continuar.
+
 O instalador escreve em `~/cp4` e gera `~/parametros-posto.sh`. Os ficheiros de dados existentes são conservados. Uma ficha anterior é guardada antes de gerar a ficha atual. Um Compose existente incompatível é conservado e exige revisão.
 
 O repositório da VM passa para a versão comum indicada no script; alterações locais ao código impedem essa atualização automática. Os dados privados da stack antiga ficam fora da alteração dos ficheiros Git.

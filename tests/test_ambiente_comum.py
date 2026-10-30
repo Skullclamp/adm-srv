@@ -56,12 +56,12 @@ class CommonEnvironmentTests(unittest.TestCase):
                         'CA_CERT','DIR_TLS','PONTO_REPO','PSK_FILE','PORTA_HTTP','PORTA_HTTPS','PORTA_BACKEND'):
                 self.assertEqual(len({r[key] for r in results.values()}),1,key)
 
-    def migrate(self, source, target):
-        code=re.search(r"python:3\.13-slim python -c '\n(.*?)'\n    fi",SOURCE,re.S).group(1)
-        code=code.replace('Path("/origem"), Path("/destino")',
-                          f'Path({str(source)!r}), Path({str(target)!r})')
-        return subprocess.run([sys.executable,'-'],input=code,capture_output=True,
-                              encoding='utf-8',timeout=30)
+    def migrate(self, source, target, identity='volume-a', adopt=False):
+        args=[sys.executable,str(ROOT/'cp4/migrar-dados.py'),'migrar',
+              '--origem',str(source),'--destino',str(target),
+              '--estado',str(target.parent/'migracao.json'),'--identidade',identity]
+        if adopt: args.append('--adotar-existente')
+        return subprocess.run(args,capture_output=True,encoding='utf-8',timeout=30)
 
     def test_cp4_migration_copies_binary_and_nested_files_and_can_repeat(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as task_dir:
@@ -89,6 +89,36 @@ class CommonEnvironmentTests(unittest.TestCase):
             self.assertNotEqual(result.returncode,0)
             self.assertEqual((source/'dados.txt').read_bytes(),b'origem')
             self.assertEqual((target/'dados.txt').read_bytes(),b'destino a conservar')
+
+    def test_repeat_preserves_work_created_after_initial_migration(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as task_dir:
+            base=Path(task_dir).resolve()
+            self.assertTrue(base.is_relative_to(Path(__file__).parent.resolve()))
+            source,target=base/'source',base/'target'
+            source.mkdir();target.mkdir()
+            (source/'dados.txt').write_bytes(b'original')
+            self.assertEqual(self.migrate(source,target).returncode,0)
+            (target/'dados.txt').write_bytes(b'alterado na aula')
+            (target/'teste-persistencia.txt').write_bytes(b'trabalho novo')
+            result=self.migrate(source,target)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual((target/'dados.txt').read_bytes(),b'alterado na aula')
+            self.assertEqual((target/'teste-persistencia.txt').read_bytes(),b'trabalho novo')
+            changed=self.migrate(source,target,identity='outro-volume')
+            self.assertNotEqual(changed.returncode,0)
+            self.assertEqual((target/'dados.txt').read_bytes(),b'alterado na aula')
+
+    def test_upgrade_records_a_completed_migration_without_copying(self):
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as task_dir:
+            base=Path(task_dir).resolve()
+            self.assertTrue(base.is_relative_to(Path(__file__).parent.resolve()))
+            source,target=base/'source',base/'target'
+            source.mkdir();target.mkdir()
+            (source/'dados.txt').write_bytes(b'origem antiga')
+            (target/'dados.txt').write_bytes(b'trabalho atual')
+            result=self.migrate(source,target,adopt=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual((target/'dados.txt').read_bytes(),b'trabalho atual')
 
 
 if __name__=='__main__':

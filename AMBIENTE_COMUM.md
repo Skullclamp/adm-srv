@@ -65,6 +65,8 @@ Acrescenta um disco de backup de 10 GB se o dispositivo `scsi1` estiver livre. N
 
 A adaptação guarda a configuração privada antiga em `/var/lib/adm-srv-posto/migracao-*`, para os contentores do projeto antigo e conserva todos os seus volumes. Copia os dados de `adm-srv-formador_cp4_dados` para `cp4_dados` e verifica hashes. Se os dois volumes já contiverem dados diferentes, interrompe: ambos ficam conservados e é necessário escolher a origem antes de continuar. Os backups Restic antigos permanecem no volume antigo, com o segredo guardado na cópia privada de configuração.
 
+Depois da primeira cópia verificada, regista a identidade do volume em `/var/lib/adm-srv-posto/migracao-cp4.json`. Repetir a preparação conserva os dados atuais de CP4, incluindo alterações feitas durante a aula. Se o volume tiver sido substituído, interrompe para recuperar os dados antes de continuar. Uma preparação comum concluída pela versão anterior é reconhecida pelo seu registo de conclusão, sem voltar a copiar os dados antigos.
+
 A stack antiga em `formador/docker-lab` fica como material de recuperação. O percurso de aula passa a usar a preparação comum.
 
 ## Executar os mesmos exercícios
@@ -104,3 +106,5 @@ Se aparecer `nginx: command not found`, conclui esse pré-requisito. Se faltar `
 ## Validação da publicação
 
 Foram executados testes de sintaxe Bash, igualdade entre o Compose do guia dos formandos e o ficheiro instalado, geração dos caminhos para p1/p2/formador, conservação de dados na migração e configuração Proxmox simulada. Não foi executada uma migração real nem uma criação de VM neste ambiente de preparação.
+
+Consulta a [verificação de T0–T17 e dos scripts](formador/VERIFICACAO.md) para os casos verificados e os limites destes testes.
