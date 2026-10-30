@@ -147,7 +147,7 @@ com_bloqueio_antigo() {
     local codigo=0
     # Quando está livre, também protegemos contra uma execução da versão antiga.
     flock --nonblock --conflict-exit-code 200 --close "$STATE_DIR/controlo.lock" \
-        /bin/bash -c 'source "$1"; shift; main_bloqueado "$@"' "$0" "${BASH_SOURCE[0]}" "$@" || codigo=$?
+        /bin/bash -c 'source "$1"; shift; main_bloqueado "$@"' adm-srv-formador-bloqueado "${BASH_SOURCE[0]}" "$@" || codigo=$?
     if [[ $codigo -eq 200 ]]; then
         verificar_bloqueio_herdado
         main_bloqueado "$@"
@@ -162,7 +162,7 @@ com_bloqueio() {
     # recebam o descritor e conservem o bloqueio depois de o script terminar.
     # O ficheiro antigo não é apagado nem desbloqueado à força.
     flock --nonblock --conflict-exit-code 200 --close "$STATE_DIR/controlo-v2.lock" \
-        /bin/bash -c 'source "$1"; shift; com_bloqueio_antigo "$@"' "$0" "${BASH_SOURCE[0]}" "$@" || codigo=$?
+        /bin/bash -c 'source "$1"; shift; com_bloqueio_antigo "$@"' adm-srv-formador-bloqueado "${BASH_SOURCE[0]}" "$@" || codigo=$?
     [[ $codigo -ne 200 ]] || erro 'Outro comando deste script está em execução.'
     return "$codigo"
 }
@@ -583,7 +583,7 @@ aguardar() {
             estado=$(guest 10 'cat /var/lib/adm-srv-formador/estado 2>/dev/null || echo a-aguardar-cloud-init' 2>/dev/null) || estado=a-aguardar-preparacao
             case "$estado" in
                 pronto) msg 'Preparação comum concluída; continuar os exercícios pelo mesmo guia'; return 0 ;;
-                erro-*) guest 20 'tail -n 70 /var/log/adm-srv-formador.log' || true; erro "A preparação da VM falhou ($estado). Executar: bash $0 diagnostico; depois de corrigir, usar retomar." ;;
+                erro-*) guest 20 'tail -n 70 /var/log/adm-srv-formador.log' || true; erro "A preparação da VM falhou ($estado). Executar: bash ${BASH_SOURCE[0]} diagnostico; depois de corrigir, usar retomar." ;;
             esac
         fi
         if ((SECONDS >= anuncio)); then printf 'VM %s: %s\n' "$VMID" "$estado"; anuncio=$((SECONDS + 30)); fi
