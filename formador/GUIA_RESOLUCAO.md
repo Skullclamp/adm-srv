@@ -4,6 +4,8 @@
 
 Este guia acompanha o [enunciado](../README.md), a [preparação CP4](../PREPARAR_CP4.md) e a [folha de respostas](../FOLHA_DE_RESPOSTAS.md). Contém soluções e cenários de falha. Como o repositório é público, os formandos também o podem consultar.
 
+O formador executa a resolução num posto com o [mesmo ambiente dos formandos](../AMBIENTE_COMUM.md): `~/cp4`, projeto `cp4`, serviço `app` e volume `cp4_dados`; Nginx, Restic e Agent 2 são serviços do Ubuntu. Os caminhos que incluem `$POSTO` seguem a mesma regra em todas as VMs.
+
 ## Preparar a execução
 
 1. Atribui um posto a cada formando. Confirma ferramentas instaladas, acesso SSH, consola de recuperação, disco de backup, CA distribuída e Zabbix operacional.
@@ -100,27 +102,34 @@ curl --silent --output /dev/null --write-out '%{http_code}\n' \
 
 ### Restauro de uma amostra
 
-Usa uma pasta nova para não sobrepor um ensaio anterior:
+Na mesma shell, carrega a ficha do posto. A preparação comum define `AMOSTRA_ORIGEM=/srv/amostra-t1`, tanto no formador como nos formandos:
 
 ```bash
-T1_DIR=$(mktemp -d "$HOME/t1-ensaio.XXXXXX")
-sudo cp -a "$AMOSTRA_ORIGEM" "$T1_DIR/original"
-sudo chown -R "$(id -u):$(id -g)" "$T1_DIR/original"
-
-(cd "$T1_DIR/original" && find . -type f -exec sha256sum {} + | sort -k2) \
-    > "$T1_DIR/hashes.txt"
-wc -l "$T1_DIR/hashes.txt"
-tar -C "$T1_DIR" -czf "$T1_DIR/amostra.tgz" original
-tar -tzf "$T1_DIR/amostra.tgz"
+source "$HOME/parametros-posto.sh"
+validar_parametros
 ```
 
-Depois de confirmar que é apenas a cópia de trabalho, simula a perda e restaura:
+Executa o ensaio completo numa pasta nova. O bloco termina na primeira falha e conserva a origem:
 
 ```bash
-test -n "$T1_DIR" && test -f "$T1_DIR/amostra.tgz" && test -d "$T1_DIR/original" && \
-    rm -r -- "$T1_DIR/original"
-tar -C "$T1_DIR" -xzf "$T1_DIR/amostra.tgz"
-(cd "$T1_DIR/original" && sha256sum -c "$T1_DIR/hashes.txt")
+(
+    set -euo pipefail
+    : "${AMOSTRA_ORIGEM:?Carrega primeiro parametros-posto.sh}"
+    sudo test -d "$AMOSTRA_ORIGEM"
+    T1_DIR=$(mktemp -d "$HOME/t1-ensaio.XXXXXX")
+    sudo cp -a "$AMOSTRA_ORIGEM" "$T1_DIR/original"
+    sudo chown -R "$(id -u):$(id -g)" "$T1_DIR/original"
+    (cd "$T1_DIR/original" && find . -type f -exec sha256sum {} + | sort -k2) \
+        > "$T1_DIR/hashes.txt"
+    test -s "$T1_DIR/hashes.txt"
+    wc -l "$T1_DIR/hashes.txt"
+    tar -C "$T1_DIR" -czf "$T1_DIR/amostra.tgz" original
+    tar -tzf "$T1_DIR/amostra.tgz"
+    mv -- "$T1_DIR/original" "$T1_DIR/original.guardado"
+    tar -C "$T1_DIR" -xzf "$T1_DIR/amostra.tgz"
+    (cd "$T1_DIR/original" && sha256sum -c "$T1_DIR/hashes.txt")
+    printf '\nEnsaio concluído em: %s\n' "$T1_DIR"
+)
 ```
 
 **Validar:** todos os ficheiros verificados com `OK`, além da decisão justificada. Não aceitar apenas as últimas linhas da saída se houver ficheiros anteriores por conferir.

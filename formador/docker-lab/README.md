@@ -1,5 +1,7 @@
 # Laboratório Docker do formador
 
+**Stack anterior — recuperação e referência.** Para acompanhar os formandos, utiliza agora o [ambiente comum](../../AMBIENTE_COMUM.md), com CP4 em `~/cp4` e serviço `app`. O comando `alinhar` do script Proxmox conserva os dados desta stack e adapta a VM. As instruções abaixo descrevem o ambiente anterior, que não é o percurso de aula comum.
+
 O comando `subir` prepara uma demonstração funcional de CP4, Nginx, HTTPS, backups Restic e monitorização Zabbix. Cria os dados iniciais, certificados, segredos, host com PSK, cenário web, triggers e primeiro backup. Os arranques seguintes conservam os dados existentes.
 
 Executar **numa VM Ubuntu com Docker Engine e Docker Compose v2**. O PowerShell do Windows serve para abrir a ligação SSH e o túnel para o browser. Esta stack não cria VMs no Proxmox.

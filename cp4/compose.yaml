@@ -1,0 +1,13 @@
+name: cp4
+services:
+  app:
+    image: python:3.13-slim
+    command: ["python", "-m", "http.server", "8000", "--directory", "/dados"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - dados:/dados
+    restart: unless-stopped
+volumes:
+  dados:
+    name: cp4_dados
