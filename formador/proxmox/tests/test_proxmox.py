@@ -162,8 +162,11 @@ class CloudInitTests(unittest.TestCase):
             self.assertTrue(temporary.is_relative_to(Path(__file__).parent.resolve()))
             guest_path = temporary / 'guest.sh'
             guest_path.write_text(guest, encoding='utf-8', newline='\n')
+            ca_path = temporary / 'ca.crt'
+            ca_path.write_text('CERTIFICADO-PUBLICO-DE-TESTE\n', encoding='utf-8')
             result = subprocess.run([sys.executable, '-', 'formador-docker', '$6$HASH-DE-TESTE',
-                                     'b' * 40, str(guest_path)], input=renderer,
+                                     'b' * 40, str(guest_path), 'formador', '192.0.2.200',
+                                     str(ca_path), 'lab-backup-601'], input=renderer,
                                     capture_output=True, encoding='utf-8', timeout=30)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(result.stdout.startswith('#cloud-config\n'))
@@ -178,8 +181,11 @@ class CloudInitTests(unittest.TestCase):
         bootstrap = files['/usr/local/sbin/preparar-formador-docker']['content']
         self.assertIn('"$VERSION_ID" == 26.04', bootstrap)
         self.assertIn('docker-compose-plugin', bootstrap)
-        self.assertIn('lab-formador.sh" subir', bootstrap)
+        self.assertIn('preparar-posto.sh" instalar', bootstrap)
+        self.assertNotIn('lab-formador.sh" subir', bootstrap)
         self.assertEqual(files['/etc/adm-srv-formador-ref']['content'], 'b' * 40 + '\n')
+        options=json.loads(files['/etc/adm-srv-formador-opcoes.json']['content'])
+        self.assertEqual(options, {'posto':'formador','ip_zabbix':'192.0.2.200','disco_serial':'lab-backup-601'})
         self.assertIn(['systemctl', 'start', '--no-block', 'adm-srv-formador.service'], config['runcmd'])
         self.assertNotIn(['systemctl', 'enable', 'adm-srv-formador.service'], config['runcmd'])
 

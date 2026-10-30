@@ -1,77 +1,96 @@
-# Criar a VM Docker do formador no Proxmox
+# VM do formador no Proxmox — ambiente comum
 
-Este script cria uma **VM Ubuntu 26.04 LTS**, instala Docker Engine e Compose na VM e monta o [laboratório do formador](../docker-lab/README.md): CP4, Nginx com HTTPS, Restic, Zabbix e agente com PSK.
+O script cria uma VM **Ubuntu 26.04 LTS** com a mesma preparação dos formandos. CP4 usa `~/cp4/compose.yaml`, projeto `cp4`, serviço `app`, volume `cp4_dados`, destino `/dados` e porta 8000. Nginx, Restic, Agent 2 e os modelos systemd ficam no Ubuntu, nos mesmos caminhos do [ambiente comum](../../AMBIENTE_COMUM.md).
 
-Executa-o como **root no terminal do anfitrião Proxmox**. A conta da VM será **ubuntu**, com palavra-passe **ubuntu**, conforme definido para este laboratório.
+O servidor Zabbix e a CA são os da sala. A preparação instala apenas o certificado **público** da CA na VM. Não copia a chave privada.
 
-## 1. Criar
+## 1. Criar ou adaptar
 
-No terminal do Proxmox:
+No terminal do **Proxmox, como root**:
 
 ```bash
 cd /root
 curl --fail --location --retry 3 \
   https://raw.githubusercontent.com/Skullclamp/adm-srv/main/formador/proxmox/criar-vm-formador.sh \
   -o criar-vm-formador.sh
+```
+
+Para uma VM nova:
+
+```bash
 bash criar-vm-formador.sh criar
 ```
 
-Valores iniciais:
+Para a VM criada pela versão anterior, conservando o VMID e os dados:
 
-| Parâmetro | Valor |
+```bash
+bash criar-vm-formador.sh alinhar
+```
+
+O script lê o IP do Zabbix do ficheiro privado `/root/laboratorio/lab.conf` e usa `/root/laboratorio/segredos/ca-lab.crt`. Se a tua preparação estiver noutro local, indica os valores:
+
+```bash
+bash criar-vm-formador.sh alinhar \
+  --ip-zabbix IP_DO_SERVIDOR_ZABBIX \
+  --ca-cert CAMINHO_DO_CERTIFICADO_PUBLICO
+```
+
+## 2. Recursos e parâmetros
+
+| Parâmetro | Valor inicial |
 |---|---|
-| Sistema | Ubuntu Server 26.04 LTS, imagem cloud oficial amd64 |
-| Nome | `formador-docker` |
-| VMID | Um ID livre, consultado no cluster Proxmox |
-| CPU | 4 vCPU, tipo `host` |
-| RAM | 8192 MB fixos, sem ballooning |
-| Disco | 64 GB |
-| Storage de discos | `local-lvm` |
-| Bridge | `vmbr0`, sem VLAN |
-| Rede | DHCP, incluindo DNS da rede |
-| Conta na VM | `ubuntu` / `ubuntu`, com `sudo` |
+| Sistema / conta | Ubuntu 26.04 LTS; ubuntu / ubuntu |
+| Nome da VM / posto | formador-docker / formador |
+| VMID | ID livre consultado no cluster |
+| CPU / RAM | 4 vCPU tipo host; 8192 MB fixos |
+| Disco do sistema | 64 GB |
+| Disco de backup | 10 GB, scsi1, serial lab-backup-VMID |
+| Storage de discos / snippets | local-lvm / local |
+| Bridge / rede | vmbr0 / DHCP |
 | Arranque da VM | Automático com o anfitrião |
 
-Confirma que o anfitrião tem recursos disponíveis para esta atribuição. O script precisa de acesso à Internet no Proxmox para obter a imagem e na VM para instalar pacotes, obter o repositório e descarregar as imagens Docker. Não depende dos templates nem dos VMIDs usados nos postos.
+O identificador `formador` ocupa o lugar de `p1`, `p2` ou `p3` nos parâmetros. Por exemplo, `/var/www/$POSTO` segue a mesma regra em todos os postos. IP, nome do site, hostname Zabbix e PSK são próprios de cada posto para evitar colisões; os comandos e a estrutura das pastas são comuns.
 
-Na primeira execução, verifica o SHA256 da imagem oficial e confirma que o VMID está livre. O comando `qm create` também recusa um ID ocupado, incluindo uma atribuição concorrente. Os comandos seguintes só gerem uma VM cuja descrição corresponda ao marcador privado guardado pelo script.
+As opções `--vmid`, `--nome`, `--storage`, `--snippets-storage`, `--bridge`, `--vlan`, `--ip`, `--gateway`, `--dns`, `--cores`, `--ram`, `--disco` e `--posto` permitem escolher a primeira configuração. Consulta:
 
-Para o cloud-init, usa o storage de ficheiros `local`. Se este ainda não aceitar `snippets`, o script acrescenta esse tipo, **conservando todos os tipos já configurados**. Não instala Docker nem pacotes adicionais no Proxmox.
+```bash
+bash criar-vm-formador.sh ajuda
+```
 
-## 2. Alterar os valores da primeira criação
-
-Exemplo com menos RAM, caso queiras atribuir 4096 MB:
+Exemplo com 4096 MB:
 
 ```bash
 bash criar-vm-formador.sh criar --ram 4096
 ```
 
-Exemplo genérico com VMID, storage e rede escolhidos por ti; substitui os valores antes de executar:
+Depois da criação, os valores ficam registados em `/root/adm-srv-formador-vm/parametros.sh`. Atribuições diferentes das registadas são recusadas. `--espera SEGUNDOS` pode ser ajustado quando repetes um comando.
+
+O script verifica o SHA256 da imagem cloud oficial e a disponibilidade do VMID. A identidade da VM é comparada pelo marcador privado na API JSON, incluindo a recusa de templates. No storage de snippets, acrescenta apenas o tipo `snippets` quando estiver em falta e conserva os tipos existentes.
+
+## 3. Adaptação da VM antiga
+
+`alinhar` usa o marcador e VMID já guardados. Acrescenta o disco de backup se scsi1 estiver livre; pode reiniciar a VM para o reconhecer, terminando uma sessão SSH aberta. Se existir outro disco em scsi1, interrompe para revisão, sem o substituir.
+
+A preparação comum guarda a configuração privada antiga em `/var/lib/adm-srv-posto/migracao-*`, para apenas os contentores do projeto antigo e conserva todos os volumes. Copia os dados do volume antigo para `cp4_dados`, verificando hashes. Se o destino já contiver dados diferentes, interrompe sem os sobrepor. Os backups cifrados antigos ficam no respetivo volume, com o segredo conservado na cópia de configuração.
+
+O instalador escreve em `~/cp4` e gera `~/parametros-posto.sh`. Os ficheiros de dados existentes são conservados. Uma ficha anterior é guardada antes de gerar a ficha atual. Um Compose existente incompatível é conservado e exige revisão.
+
+O repositório da VM passa para a versão comum indicada no script; alterações locais ao código impedem essa atualização automática. Os dados privados da stack antiga ficam fora da alteração dos ficheiros Git.
+
+## 4. Continuar a aula
+
+Quando a preparação terminar, entra na VM Ubuntu:
 
 ```bash
-bash criar-vm-formador.sh criar \
-  --vmid VMID_LIVRE \
-  --storage STORAGE_DOS_DISCOS \
-  --snippets-storage STORAGE_DOS_SNIPPETS \
-  --bridge BRIDGE_DA_REDE \
-  --ip IP_DA_VM/PREFIXO \
-  --gateway IP_DO_GATEWAY \
-  --dns 'IP_DNS_1 IP_DNS_2'
+source "$HOME/parametros-posto.sh"
+validar_parametros
+cd "$HOME/cp4"
+sudo docker compose ps
 ```
 
-Com IP fixo, escolhe um endereço reservado e livre na tua rede, fora de atribuições DHCP conflitantes. O script valida os endereços e a relação com o gateway; isso não comprova que outro equipamento não usa o mesmo IP. Se não indicares DNS para um IP fixo, usa `1.1.1.1 8.8.8.8`. Para uma VLAN, acrescenta `--vlan NUMERO`.
+Segue o [guia de resolução T0–T17](../GUIA_RESOLUCAO.md). A preparação não resolve antecipadamente a publicação do site, a emissão TLS, os backups de treino, o timer ou o registo do host no Zabbix. Assim, formador e formandos executam os mesmos passos.
 
-Os parâmetros ficam registados em `/root/adm-srv-formador-vm/parametros.sh`. Depois da criação, repete os comandos sem as opções iniciais. Opções diferentes das registadas são recusadas para impedir a reconfiguração acidental da VM. `--espera SEGUNDOS` pode ser ajustado em qualquer execução.
-
-## 3. Aguardar pela preparação
-
-O script arranca a VM e aguarda até 1800 segundos. Apresenta o progresso a cada 30 segundos. O agente QEMU permite observar o processo; o sucesso exige que a instalação termine e que o laboratório confirme HTTPS, CP4, recolha Zabbix e repositório Restic.
-
-A preparação é iniciada por cloud-init através de um serviço `adm-srv-formador.service`. A espera não depende de tratar o código de saída de `cloud-init status` como sucesso ou falha. O script usa a lista `users` e a configuração atual de palavras-passe do cloud-init.
-
-No final, apresenta VMID, IP, ligação SSH, túnel para o Windows e credenciais próprias do Zabbix. Estas últimas são geradas **na VM** pelo script Docker. `ubuntu` / `ubuntu` é a conta de acesso ao Ubuntu; o frontend Zabbix usa **Admin** e a palavra-passe indicada por `acessos`.
-
-Para consultar novamente, no Proxmox:
+No Proxmox, podes consultar:
 
 ```bash
 bash criar-vm-formador.sh estado
@@ -79,41 +98,36 @@ bash criar-vm-formador.sh acessos
 bash criar-vm-formador.sh verificar
 ```
 
-O estado `pronto` indica que a preparação terminou anteriormente. `verificar` faz uma nova verificação dos serviços e backups em execução.
+`verificar` confirma os pré-requisitos, CP4, amostra T1, CA pública, Agent 2 e disco de backup. O estado `pronto` indica que essa preparação terminou. HTTPS e monitorização central são verificados nas tarefas respetivas.
 
-## 4. Aceder pelo Windows
+## 5. Windows
 
-No **PowerShell do Windows**, substitui `IP_DA_VM` pelo endereço apresentado:
+No PowerShell, usa o IP apresentado para abrir SSH:
 
 ```powershell
 ssh ubuntu@IP_DA_VM
 ```
 
-Noutra janela PowerShell, abre o túnel e mantém-no aberto:
+Para encaminhar as portas comuns para o browser do Windows:
 
 ```powershell
-ssh -N -o ExitOnForwardFailure=yes -L 8080:127.0.0.1:8080 -L 8443:127.0.0.1:8443 -L 8081:127.0.0.1:8081 ubuntu@IP_DA_VM
+ssh -N -o ExitOnForwardFailure=yes -L 8000:127.0.0.1:8000 -L 8080:127.0.0.1:80 -L 8443:127.0.0.1:443 ubuntu@IP_DA_VM
 ```
 
-No browser do Windows:
+CP4 fica disponível em http://localhost:8000. O site Nginx é trabalhado a partir de T3 e o HTTPS a partir de T5. Para validação TLS, segue o nome e o certificado da ficha do posto; o túnel não altera o nome incluído no certificado. O frontend Zabbix é o servidor da sala indicado em `URL_ZABBIX`.
 
-- Site Nginx: <https://localhost:8443>.
-- CP4: <https://localhost:8443/app/>.
-- Zabbix: <http://localhost:8081>.
+## 6. Diagnóstico e repetição
 
-Segue o [guia Docker](../docker-lab/README.md#2-aceder-pelo-windows) para importar o certificado público da CA do laboratório no Windows. As portas da stack escutam em loopback na VM e são encaminhadas pelo túnel.
-
-## 5. Diagnosticar e retomar
-
-Se uma versão anterior terminar com `O VMID ... não corresponde à VM registada` logo após criar a VM, volta a descarregar o script pelo comando do ponto 1 e repete `criar`. A versão corrigida lê o marcador pela API JSON: a saída textual de `qm config` codifica a descrição e causava uma comparação incorreta. O estado privado existente permite retomar a mesma VM. A comparação continua a exigir o marcador exato e recusa outra VM ou um template.
-
-Se houver uma falha de Internet ou de instalação, a VM, discos e dados ficam conservados. No Proxmox:
+No Proxmox:
 
 ```bash
 bash criar-vm-formador.sh diagnostico
+bash criar-vm-formador.sh retomar --espera 2400
 ```
 
-Se o agente ainda não responder, abre a consola da VM no Proxmox, entra com `ubuntu` / `ubuntu` e consulta:
+`retomar` volta a enviar a preparação comum e repete-a conservando os dados. O progresso é apresentado a cada 30 segundos; os erros incluem fase, linha e código quando disponíveis, seguidos das últimas linhas do log.
+
+Se o agente QEMU ainda não responder, usa a consola da VM:
 
 ```bash
 sudo cloud-init status --long
@@ -121,35 +135,12 @@ sudo journalctl -u cloud-final.service -u adm-srv-formador.service --no-pager -n
 sudo tail -n 100 /var/log/adm-srv-formador.log
 ```
 
-Depois de corrigir a causa, se o agente QEMU estiver disponível, volta ao Proxmox:
+Se apenas terminou a espera e a instalação continua, consulta `estado` e aguarda. Não é necessário reiniciar um processo que ainda decorre.
 
-```bash
-bash criar-vm-formador.sh retomar --espera 2400
-```
+## 7. Validação e custódia
 
-Se a configuração Proxmox ainda estiver incompleta, repete `criar`. Se apenas terminou o tempo de espera e a instalação continua, consulta `estado` ou repete `criar`; não é necessário reiniciar a instalação.
+Conserva `/root/adm-srv-formador-vm/` no Proxmox. Na VM, conserva os ficheiros de parâmetros, as PSK, os segredos Restic, os volumes antigos e a pasta privada de migração. Não há comandos de destruir VM, apagar volumes ou repor snapshots neste script.
 
-Na consola da VM, também podes retomar o serviço de preparação:
+A validação local inclui Bash, geração cloud-init, contratos de nomes e caminhos, conservação da migração e APIs Proxmox simuladas. Não foi executada uma criação ou migração real neste ambiente.
 
-```bash
-sudo systemctl reset-failed adm-srv-formador.service
-sudo systemctl start --no-block adm-srv-formador.service
-```
-
-Depois de pronta, uma reinicialização da VM usa o arranque automático do Docker e dos contentores. A preparação inicial não volta a instalar tudo em cada arranque. Se a VM foi reiniciada a meio da instalação, usa `retomar`.
-
-Se introduziste uma falha didática na stack, repõe-a com o script Docker antes de repetir a preparação. Alterações locais no código do repositório são conservadas e impedem uma atualização automática desse código.
-
-## 6. Ficheiros e validação
-
-- No Proxmox, `/root/adm-srv-formador-vm/` guarda o VMID, marcador de propriedade e configuração privada. Conserva esta pasta para reconhecer e retomar a VM.
-- A imagem verificada fica em `/var/cache/adm-srv-formador/`.
-- O snippet cloud-init tem nome próprio por VM e marcador, no storage selecionado. Precisa de estar acessível no nó se migrares a VM.
-- Na VM, o repositório fica em `/home/ubuntu/adm-srv`; os segredos e dados seguem o [guia Docker](../docker-lab/README.md).
-- A versão inicial do laboratório está fixada no commit `b2bc4aaa6aeb802866878c4cf972b448c7caf8d4`, para que a preparação use um conjunto conhecido de ficheiros.
-
-Não há operações de apagar VM, destruir discos ou repor snapshots neste script.
-
-A validação desta publicação inclui sintaxe Bash, geração do cloud-init e testes locais de VMID, identidade e parâmetros. **Ainda não foi executada uma criação real no Proxmox neste ambiente.** Na máquina de preparação não existe um anfitrião Proxmox nem Docker. O script verifica o resultado dentro da VM quando é executado.
-
-Referências: [imagem oficial Ubuntu 26.04 LTS](https://cloud-images.ubuntu.com/releases/resolute/release/), [Cloud-Init no Proxmox](https://pve.proxmox.com/wiki/Cloud-Init_Support), [comandos qm](https://github.com/proxmox/pve-docs/blob/master/generated/qm.1-synopsis.adoc), [instalação oficial Docker em Ubuntu](https://docs.docker.com/engine/install/ubuntu/) e [contas cloud-init](https://docs.cloud-init.io/en/latest/reference/modules.html#users-and-groups).
+Referências: [imagem Ubuntu 26.04](https://cloud-images.ubuntu.com/releases/resolute/release/), [Cloud-Init Proxmox](https://pve.proxmox.com/wiki/Cloud-Init_Support), [qm](https://github.com/proxmox/pve-docs/blob/master/generated/qm.1-synopsis.adoc) e [Docker em Ubuntu](https://docs.docker.com/engine/install/ubuntu/).

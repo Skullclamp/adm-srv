@@ -20,10 +20,15 @@ CORES=4
 RAM=8192
 DISCO=64
 ESPERA=1800
-LAB_REF=b2bc4aaa6aeb802866878c4cf972b448c7caf8d4
+LAB_REF=8ebce3b45c866382669d0737044435febb42a4d3
+# Atualizado na publicação do ambiente comum; marcador de versão para a migração.
+REF_COMUM=8ebce3b45c866382669d0737044435febb42a4d3
+POSTO=formador
+IP_ZABBIX=
+CA_ORIGEM=/root/laboratorio/segredos/ca-lab.crt
 TOKEN=
 NODE=
-STATE_KEYS=(VMID NOME STORAGE SNIPPETS_STORAGE BRIDGE VLAN IP GATEWAY DNS CORES RAM DISCO LAB_REF TOKEN NODE)
+STATE_KEYS=(VMID NOME STORAGE SNIPPETS_STORAGE BRIDGE VLAN IP GATEWAY DNS CORES RAM DISCO LAB_REF TOKEN NODE POSTO IP_ZABBIX CA_ORIGEM)
 declare -A PEDIDOS=()
 
 erro() { printf 'ERRO: %s\n' "$*" >&2; exit 1; }
@@ -33,7 +38,7 @@ ajuda() {
     cat <<'TXT'
 Uso no Proxmox, como root:
   bash criar-vm-formador.sh criar [opções]
-  bash criar-vm-formador.sh estado | acessos | diagnostico | retomar | verificar
+  bash criar-vm-formador.sh estado | acessos | diagnostico | alinhar | retomar | verificar
 
 Opções da primeira criação:
   --vmid NUMERO           por omissão: VMID livre atribuído pelo Proxmox
@@ -49,8 +54,14 @@ Opções da primeira criação:
   --ram MB               8192; mínimo 4096
   --disco GB             64; mínimo 32
   --espera SEGUNDOS      1800; também aceite nos comandos seguintes
+  --posto ID             formador; usa a mesma regra de caminhos dos postos p1, p2…
+  --ip-zabbix IP         servidor da sala; lê lab.conf privado quando disponível
+  --ca-cert FICHEIRO     certificado público da CA da sala
 
-Ubuntu 26.04 LTS, conta ubuntu / ubuntu, Docker Engine, Compose e laboratório.
+Ubuntu 26.04 LTS, conta ubuntu / ubuntu e preparação igual à dos formandos.
+CP4: ~/cp4, projeto cp4, serviço app, volume cp4_dados, /dados e porta 8000.
+Nginx, Restic e Agent 2 nativos; backup num disco adicional de 10 GB.
+alinhar adapta a VM antiga, guardando configurações e volumes. Pode reiniciá-la.
 Repetir criar retoma a mesma VM identificada pelo estado privado, sem criar outra.
 Não há comando de remoção ou reposição de discos neste script.
 TXT
@@ -68,6 +79,7 @@ argumentos() {
             --vlan) chave=VLAN ;; --ip) chave=IP ;; --gateway) chave=GATEWAY ;;
             --dns) chave=DNS ;; --cores) chave=CORES ;; --ram) chave=RAM ;;
             --disco) chave=DISCO ;; --espera) chave=ESPERA ;;
+            --posto) chave=POSTO ;; --ip-zabbix) chave=IP_ZABBIX ;; --ca-cert) chave=CA_ORIGEM ;;
             *) erro "Opção desconhecida: $1" ;;
         esac
         printf -v "$chave" '%s' "$2"
@@ -176,6 +188,52 @@ escolher_vmid() {
     pvesh get /cluster/nextid --vmid "$VMID" >/dev/null || erro "O VMID $VMID já está ocupado no cluster. Escolher outro."
 }
 
+parametros_sala() {
+    if [[ -z "$IP_ZABBIX" && -f /root/laboratorio/lab.conf ]]; then
+        IP_ZABBIX=$(python3 - /root/laboratorio/lab.conf <<'PY_SALA'
+import shlex, sys
+from pathlib import Path
+for line in Path(sys.argv[1]).read_text().splitlines():
+    words=shlex.split(line, comments=True)
+    if words and words[0].startswith('IP_ZABBIX='):
+        print(words[0].split('=',1)[1]); break
+PY_SALA
+)
+    fi
+    [[ "$POSTO" =~ ^[a-zA-Z0-9_-]+$ ]] || erro 'Identificador do posto inválido.'
+    [[ -n "$IP_ZABBIX" ]] || erro 'Indicar --ip-zabbix com o servidor da sala, ou disponibilizar /root/laboratorio/lab.conf.'
+    python3 -c 'import ipaddress,sys;ipaddress.IPv4Address(sys.argv[1])' "$IP_ZABBIX"
+    [[ -f "$CA_ORIGEM" ]] || erro 'Indicar --ca-cert com o certificado público da CA da sala.'
+    openssl x509 -in "$CA_ORIGEM" -noout >/dev/null
+    ! grep -q 'PRIVATE KEY' "$CA_ORIGEM" || erro 'Fornecer apenas o certificado público da CA.'
+}
+
+disco_backup_vm() {
+    local config ligado
+    config=$(qm config "$VMID")
+    if grep -q '^scsi1:' <<< "$config"; then
+        grep '^scsi1:' <<< "$config" | grep -Eq "(^|,)serial=lab-backup-$VMID(,|$)" \
+            || erro 'scsi1 já está ocupado por outro disco. Rever o disco de backup sem o substituir.'
+        return 0
+    fi
+    ligado=$(qm status "$VMID")
+    qm set "$VMID" --scsi1 "$STORAGE:10,serial=lab-backup-$VMID"
+    if [[ "$ligado" == 'status: running' ]]; then
+        msg 'A reiniciar a VM para reconhecer o novo disco de backup'
+        qm reboot "$VMID" --timeout 120
+        sleep 10
+    fi
+}
+
+aguardar_agente() {
+    local limite=$((SECONDS + 300))
+    while ((SECONDS < limite)); do
+        if qm guest cmd "$VMID" ping >/dev/null 2>&1; then return 0; fi
+        sleep 5
+    done
+    erro 'O agente QEMU ainda não responde. Consultar a consola da VM antes de repetir alinhar.'
+}
+
 storage_config() { pvesh get "/storage/$1" --output-format json; }
 
 validar_infraestrutura() {
@@ -227,7 +285,10 @@ install -d -m 0700 "$STATE"
 exec 9>/run/lock/adm-srv-formador.lock
 flock -n 9 || { echo 'Já existe uma preparação em execução.' >&2; exit 1; }
 exec > >(tee -a /var/log/adm-srv-formador.log) 2>&1
-trap 'rc=$?; if ((rc != 0)); then printf "erro-linha-%s\n" "$LINENO" > "$STATE/estado"; echo "Preparação interrompida; dados conservados." >&2; fi; exit "$rc"' EXIT
+FASE=docker
+LINHA_ERRO=desconhecida
+trap 'LINHA_ERRO=$LINENO' ERR
+trap 'rc=$?; if ((rc != 0)); then printf "erro-%s-linha-%s-codigo-%s\n" "$FASE" "$LINHA_ERRO" "$rc" > "$STATE/estado"; echo "Preparação interrompida na fase $FASE; consultar /var/log/adm-srv-formador.log." >&2; fi; exit "$rc"' EXIT
 printf 'a-instalar-docker\n' > "$STATE/estado"
 source /etc/os-release
 [[ "$ID" == ubuntu && "$VERSION_ID" == 26.04 && $(dpkg --print-architecture) == amd64 ]]
@@ -258,7 +319,8 @@ apt-get -o Acquire::Retries=3 -o DPkg::Lock::Timeout=120 install -y \
 systemctl enable --now docker
 docker compose version
 
-printf 'a-montar-laboratorio\n' > "$STATE/estado"
+FASE=repositorio
+printf 'a-obter-material-comum\n' > "$STATE/estado"
 if [[ ! -e "$REPO" ]]; then
     runuser -u ubuntu -- git clone "$URL" "$REPO"
 fi
@@ -268,10 +330,15 @@ git_ubuntu() { runuser -u ubuntu -- git -C "$REPO" "$@"; }
 [[ -z $(git_ubuntu status --porcelain) ]] || { echo 'Existem alterações locais; conservadas. Rever antes de retomar.' >&2; exit 1; }
 git_ubuntu fetch --depth 1 origin "$LAB_REF"
 git_ubuntu checkout --detach "$LAB_REF"
-bash "$REPO/formador/docker-lab/lab-formador.sh" subir
+FASE=posto
+printf 'a-preparar-posto-comum\n' > "$STATE/estado"
+mapfile -t OPCOES < <(python3 -c 'import json; c=json.load(open("/etc/adm-srv-formador-opcoes.json")); print(c["posto"]);print(c["ip_zabbix"]);print(c["disco_serial"])')
+[[ ${#OPCOES[@]} -eq 3 ]]
+bash "$REPO/preparar-posto.sh" instalar --posto "${OPCOES[0]}" --ip-zabbix "${OPCOES[1]}" \
+    --ca-cert /root/ca-lab.crt --disco-serial "${OPCOES[2]}" --inicializar-disco --migrar-docker
 printf 'pronto\n' > "$STATE/estado"
 printf '%s\n' "$LAB_REF" > "$STATE/pronto"
-echo 'VM do formador preparada: Docker e laboratório verificados.'
+echo 'VM do formador preparada com o mesmo modelo dos formandos. Continuar T0–T17.'
 BASH_GUEST
 }
 
@@ -288,9 +355,9 @@ criar_snippet() {
     install -d -m 0755 "$(dirname -- "$destino")"
     bootstrap_guest > "$STATE_DIR/bootstrap-guest.sh"
     hash=$(printf '%s' ubuntu | openssl passwd -6 -stdin)
-    python3 - "$NOME" "$hash" "$LAB_REF" "$STATE_DIR/bootstrap-guest.sh" > "$STATE_DIR/cloud-init.yaml" <<'PY_CLOUD'
+    python3 - "$NOME" "$hash" "$LAB_REF" "$STATE_DIR/bootstrap-guest.sh" "$POSTO" "$IP_ZABBIX" "$CA_ORIGEM" "lab-backup-$VMID" > "$STATE_DIR/cloud-init.yaml" <<'PY_CLOUD'
 import json, pathlib, sys
-name, password_hash, ref, guest = sys.argv[1:]
+name, password_hash, ref, guest, posto, zabbix, ca, serial = sys.argv[1:]
 unit = '''[Unit]
 Description=Preparar laboratorio Docker do formador
 Wants=network-online.target
@@ -315,6 +382,9 @@ config = {
         {'path': '/usr/local/sbin/preparar-formador-docker', 'owner': 'root:root', 'permissions': '0700',
          'content': pathlib.Path(guest).read_text(encoding='utf-8')},
         {'path': '/etc/adm-srv-formador-ref', 'owner': 'root:root', 'permissions': '0600', 'content': ref + '\n'},
+        {'path': '/etc/adm-srv-formador-opcoes.json', 'owner': 'root:root', 'permissions': '0600',
+         'content': json.dumps({'posto':posto, 'ip_zabbix':zabbix, 'disco_serial':serial})},
+        {'path': '/root/ca-lab.crt', 'owner': 'root:root', 'permissions': '0644', 'content': pathlib.Path(ca).read_text()},
         {'path': '/etc/ssh/sshd_config.d/00-formador.conf', 'owner': 'root:root', 'permissions': '0644',
          'content': 'PasswordAuthentication yes\nPermitRootLogin no\n'},
         {'path': '/etc/systemd/system/adm-srv-formador.service', 'owner': 'root:root', 'permissions': '0644', 'content': unit},
@@ -359,13 +429,57 @@ configurar_vm() {
         --boot order=scsi0 --serial0 socket --vga serial0 --agent enabled=1 --onboot 1 \
         --ciuser ubuntu --ipconfig0 "$rede_ip" "${dns_args[@]}" --cicustom "user=$SNIPPET_VOLUME"
     qm cloudinit update "$VMID"
+    disco_backup_vm
     touch "$STATE_DIR/vm-configurada"
+    touch "$STATE_DIR/preparacao-comum"
 }
 
-guest() {
-    local limite=$1 comando=$2 raw
-    raw=$(qm guest exec "$VMID" --timeout "$limite" --synchronous 1 -- /bin/bash -lc "$comando") || return "$?"
-    printf '%s' "$raw" | python3 -c '
+enviar_preparacao() {
+    bootstrap_guest > "$STATE_DIR/bootstrap-guest.sh"
+    python3 - "$STATE_DIR/bootstrap-guest.sh" "$LAB_REF" "$POSTO" "$IP_ZABBIX" "$CA_ORIGEM" "lab-backup-$VMID" > "$STATE_DIR/atualizar-guest.json" <<'PY_ENVIO'
+import json, pathlib, sys
+script, ref, posto, server, ca, serial=sys.argv[1:]
+print(json.dumps({
+ '/usr/local/sbin/preparar-formador-docker': [0o700,pathlib.Path(script).read_text()],
+ '/etc/adm-srv-formador-ref': [0o600,ref+'\n'],
+ '/etc/adm-srv-formador-opcoes.json': [0o600,json.dumps({'posto':posto,'ip_zabbix':server,'disco_serial':serial})],
+ '/root/ca-lab.crt': [0o644,pathlib.Path(ca).read_text()],
+}))
+PY_ENVIO
+    local resultado
+    resultado=$(qm guest exec "$VMID" --timeout 30 --synchronous 1 --pass-stdin 1 -- /usr/bin/python3 -c '
+import json, os, pathlib, sys
+allowed={"/usr/local/sbin/preparar-formador-docker","/etc/adm-srv-formador-ref","/etc/adm-srv-formador-opcoes.json","/root/ca-lab.crt"}
+files=json.load(sys.stdin)
+if set(files)!=allowed:
+    raise SystemExit("Lista de ficheiros inesperada; não aplicada.")
+for name,(mode,content) in files.items():
+    path=pathlib.Path(name)
+    if path.is_symlink():
+        raise SystemExit("Destino inesperado; não aplicado.")
+    path.write_text(content)
+    path.chmod(mode)
+print("Preparação comum atualizada; dados e volumes conservados.")' < "$STATE_DIR/atualizar-guest.json")
+    resultado_guest "$resultado"
+}
+
+alinhar_vm() {
+    parametros_sala
+    LAB_REF=$REF_COMUM
+    guardar_estado
+    [[ $(qm status "$VMID") == 'status: running' ]] || qm start "$VMID"
+    disco_backup_vm
+    aguardar_agente
+    guest 120 'systemctl stop adm-srv-formador.service'
+    enviar_preparacao
+    touch "$STATE_DIR/preparacao-comum"
+    guest 20 'set -e; systemctl daemon-reload; systemctl reset-failed adm-srv-formador.service; install -d -m 0700 /var/lib/adm-srv-formador; rm -f /var/lib/adm-srv-formador/pronto; printf "a-alinhar\n" > /var/lib/adm-srv-formador/estado; systemctl restart --no-block adm-srv-formador.service'
+    aguardar
+    acessos
+}
+
+resultado_guest() {
+    printf '%s' "$1" | python3 -c '
 import json, sys
 r=json.load(sys.stdin)
 sys.stdout.write(r.get("out-data", ""))
@@ -374,6 +488,12 @@ if not r.get("exited"):
 if r.get("exitcode", 1):
     sys.stderr.write(r.get("err-data", ""))
     sys.exit(r.get("exitcode", 1))'
+}
+
+guest() {
+    local limite=$1 comando=$2 raw
+    raw=$(qm guest exec "$VMID" --timeout "$limite" --synchronous 1 -- /bin/bash -lc "$comando") || return "$?"
+    resultado_guest "$raw"
 }
 
 ip_vm() {
@@ -396,8 +516,8 @@ aguardar() {
         if qm guest cmd "$VMID" ping >/dev/null 2>&1; then
             estado=$(guest 10 'cat /var/lib/adm-srv-formador/estado 2>/dev/null || echo a-aguardar-cloud-init' 2>/dev/null) || estado=a-aguardar-preparacao
             case "$estado" in
-                pronto) msg 'Docker e laboratório concluíram as verificações de arranque'; return 0 ;;
-                erro-*) erro "A preparação da VM falhou ($estado). Executar: bash $0 diagnostico; depois de corrigir, usar retomar." ;;
+                pronto) msg 'Preparação comum concluída; continuar os exercícios pelo mesmo guia'; return 0 ;;
+                erro-*) guest 20 'tail -n 70 /var/log/adm-srv-formador.log' || true; erro "A preparação da VM falhou ($estado). Executar: bash $0 diagnostico; depois de corrigir, usar retomar." ;;
             esac
         fi
         if ((SECONDS >= anuncio)); then printf 'VM %s: %s\n' "$VMID" "$estado"; anuncio=$((SECONDS + 30)); fi
@@ -411,14 +531,14 @@ acessos() {
     endereco=$(ip_vm 2>/dev/null) || endereco=IP_DA_VM
     printf '\nVMID: %s\nNome: %s\nIP: %s\nSSH: ssh ubuntu@%s\nConta Ubuntu: ubuntu / ubuntu\n' "$VMID" "$NOME" "$endereco" "$endereco"
     printf '\nNo PowerShell do Windows, manter o túnel aberto:\n'
-    printf 'ssh -N -o ExitOnForwardFailure=yes -L 8080:127.0.0.1:8080 -L 8443:127.0.0.1:8443 -L 8081:127.0.0.1:8081 ubuntu@%s\n' "$endereco"
-    guest 20 'cd /home/ubuntu/adm-srv/formador/docker-lab && bash lab-formador.sh acessos'
+    printf 'ssh -N -o ExitOnForwardFailure=yes -L 8000:127.0.0.1:8000 -L 8080:127.0.0.1:80 -L 8443:127.0.0.1:443 ubuntu@%s\n' "$endereco"
+    guest 20 'source /home/ubuntu/parametros-posto.sh; printf "\nCP4: ~/cp4/compose.yaml | projeto cp4 | serviço app | volume cp4_dados\nAmostra T1: %s\nSite do posto: %s\nZabbix da sala: %s\nNa shell Ubuntu: source ~/parametros-posto.sh\n" "$AMOSTRA_ORIGEM" "$NOME_SITE" "$URL_ZABBIX"'
 }
 
 main() {
     case "${1:-}" in ajuda|help|-h|--help) ajuda; return 0 ;; esac
     argumentos "$@"
-    case "$COMANDO" in criar|estado|acessos|diagnostico|retomar|verificar) ;; *) erro 'Comando desconhecido. Consultar ajuda.' ;; esac
+    case "$COMANDO" in criar|estado|acessos|diagnostico|alinhar|retomar|verificar) ;; *) erro 'Comando desconhecido. Consultar ajuda.' ;; esac
     trap 'printf "Operação interrompida na linha %s; VM, discos e estado foram conservados.\n" "$LINENO" >&2' ERR
     umask 077
     dependencias
@@ -432,6 +552,13 @@ main() {
     [[ "$IP" == dhcp || -n "$DNS" ]] || DNS='1.1.1.1 8.8.8.8'
     validar_opcoes
     if [[ "$COMANDO" == criar ]]; then
+        parametros_sala
+        LAB_REF=$REF_COMUM
+        if [[ -f "$STATE_FILE" && -f "$STATE_DIR/vm-configurada" && ! -f "$STATE_DIR/preparacao-comum" ]]; then
+            verificar_identidade
+            alinhar_vm
+            return 0
+        fi
         validar_infraestrutura
         if [[ ! -f "$STATE_FILE" ]]; then
             escolher_vmid
@@ -439,6 +566,7 @@ main() {
             obter_imagem
             guardar_estado
         fi
+        guardar_estado
         if ! qm status "$VMID" >/dev/null 2>&1; then
             [[ ! -f "$STATE_DIR/vm-configurada" ]] || erro 'A VM registada deixou de existir. Não será recriada sobre o estado anterior.'
             pvesh get /cluster/nextid --vmid "$VMID" >/dev/null || erro "VMID $VMID ocupado; nenhuma VM foi alterada."
@@ -465,14 +593,11 @@ main() {
             qm status "$VMID"
             guest 20 'cloud-init status --long; systemctl --no-pager --full status adm-srv-formador.service || true; journalctl -u cloud-final.service -u adm-srv-formador.service --no-pager -n 70; tail -n 70 /var/log/adm-srv-formador.log 2>/dev/null || true'
             ;;
-        retomar)
+        alinhar|retomar)
             [[ -f "$STATE_DIR/vm-configurada" ]] || erro 'Configuração Proxmox incompleta; repetir criar.'
-            [[ $(qm status "$VMID") == 'status: running' ]] || qm start "$VMID"
-            guest 20 'set -e; systemctl daemon-reload; systemctl reset-failed adm-srv-formador.service; install -d -m 0700 /var/lib/adm-srv-formador; rm -f /var/lib/adm-srv-formador/pronto; printf "a-retomar\n" > /var/lib/adm-srv-formador/estado; systemctl restart --no-block adm-srv-formador.service'
-            aguardar
-            acessos
+            alinhar_vm
             ;;
-        verificar) guest 600 'cd /home/ubuntu/adm-srv/formador/docker-lab && bash lab-formador.sh verificar' ;;
+        verificar) guest 600 'bash /home/ubuntu/adm-srv/preparar-posto.sh verificar' ;;
     esac
 }
 
