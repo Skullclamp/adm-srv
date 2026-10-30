@@ -8,6 +8,8 @@ Realiza as tarefas **T0–T17** na ordem indicada. Para cada tarefa, responde à
 
 Preenche a [folha de respostas e evidências](FOLHA_DE_RESPOSTAS.md). Podes descarregar uma cópia e preenchê-la localmente. Os manuais M4–M8 são fornecidos pelo formador para estudo autónomo depois da sessão.
 
+Para ligar a aplicação Python Docker ao Zabbix, segue [Monitorizar e testar a CP4](ZABBIX_CP4.md): criar o host em Data collection, configurar itens e triggers, observar dados e testar paragem, conteúdo errado e recuperação.
+
 ## Antes de começar
 
 - Confirma com o formador qual é o teu posto.

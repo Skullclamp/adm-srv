@@ -9,6 +9,7 @@ Esta pasta reúne a resolução da sessão prática M4–M8, incluindo a prepara
 | Ficheiro | Utilização |
 |---|---|
 | [GUIA_RESOLUCAO.md](GUIA_RESOLUCAO.md) | Resolução passo a passo de T0–T17, resultados esperados, respostas, falhas e recuperação |
+| [Zabbix e CP4](../ZABBIX_CP4.md) | Data collection, itens HTTP, triggers, métricas Docker e testes da aplicação Python |
 | [parametros.exemplo.sh](parametros.exemplo.sh) | Modelo sem valores da infraestrutura, para preencher numa cópia local |
 | [VERIFICACAO.md](VERIFICACAO.md) | Correções de T0–T17, testes executados e limites da validação |
 | [Ambiente comum](../AMBIENTE_COMUM.md) | Mesmos nomes, pastas e comandos para formador e formandos |

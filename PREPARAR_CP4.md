@@ -4,6 +4,8 @@
 
 Formador e formandos usam o [mesmo ambiente](AMBIENTE_COMUM.md). O YAML do ponto 2 corresponde ao [ficheiro Compose comum](cp4/compose.yaml): projeto `cp4`, serviço `app`, volume `cp4_dados` e pasta `$HOME/cp4`.
 
+Com a CP4 a funcionar, usa o guia [Monitorizar e testar a aplicação no Zabbix](ZABBIX_CP4.md) para criar a recolha em Data collection e testar alarmes de disponibilidade e conteúdo.
+
 Neste exercício, **CP4** é o nome da aplicação HTTP usada nas tarefas seguintes. A aplicação é composta por um serviço Python iniciado com Docker Compose e por um volume nomeado que guarda os ficheiros publicados.
 
 O objetivo é obter uma aplicação que responda por HTTP e cujos dados continuem disponíveis depois de substituir o contentor. O Compose descreve como executar o serviço; o volume guarda os dados da aplicação.

@@ -1288,6 +1288,8 @@ esac
 
 **Contextos: VM do posto e browser do Windows · 25 min.**
 
+Para monitorizar também a aplicação Python Docker, segue o complemento [Zabbix e CP4](../ZABBIX_CP4.md). Inclui os passos de Data collection, disponibilidade/tempo/conteúdo HTTP, triggers, métricas do Docker e ensaios de falha e recuperação.
+
 ### Pré-verificação de T12
 
 **Executar: VM Ubuntu do posto; o teste zabbix_get tem outro contexto indicado abaixo.** Se este bloco falhar, corrige o pré-requisito antes dos passos seguintes. O carregamento da ficha fica na sessão atual; os testes são feitos num bloco que para na primeira falha.
