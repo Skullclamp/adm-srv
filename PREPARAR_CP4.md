@@ -28,20 +28,22 @@ sudo ss -ltnp 'sport = :8000'
 
 ## 2. Criar o ficheiro Compose
 
-Cria uma pasta de trabalho na tua conta. O bloco seguinte recusa substituir um ficheiro `compose.yaml` já existente.
+**No terminal da VM Ubuntu**, cria a pasta e abre um ficheiro novo no editor:
 
 ```bash
-(
-    set -e
-    mkdir -p "$HOME/cp4"
-    cd "$HOME/cp4"
+mkdir -p "$HOME/cp4"
+cd "$HOME/cp4"
 
-    if [ -e compose.yaml ]; then
-        echo "Já existe compose.yaml: conserva-o e verifica-o antes de continuar."
-        exit 1
-    fi
+if [ -e compose.yaml ]; then
+    echo "Já existe compose.yaml: conserva-o e verifica-o antes de continuar."
+else
+    nano compose.yaml
+fi
+```
 
-    cat > compose.yaml <<'YAML'
+Se aparecer o aviso de ficheiro existente, revê-o com o formador antes de o alterar. Se o editor abrir, **cola apenas o conteúdo YAML seguinte dentro do ficheiro `compose.yaml`**:
+
+```yaml
 name: cp4
 services:
   app:
@@ -55,9 +57,11 @@ services:
 volumes:
   dados:
     name: cp4_dados
-YAML
-)
 ```
+
+**Guarda e fecha o editor:** no nano, prime `Ctrl+O`, depois `Enter` e finalmente `Ctrl+X`. O YAML é conteúdo do ficheiro; os comandos Bash são executados no terminal.
+
+Depois, continua no ponto 3 para validar e iniciar a aplicação.
 
 Neste modelo:
 
