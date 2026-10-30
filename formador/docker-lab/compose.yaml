@@ -1,0 +1,195 @@
+name: adm-srv-formador
+
+x-db-env: &db-env
+  DB_SERVER_HOST: db
+  POSTGRES_DB: zabbix
+  POSTGRES_USER: zabbix
+  POSTGRES_PASSWORD: ${DB_PASSWORD:?Executar lab-formador.sh preparar}
+
+x-restic-volumes: &restic-volumes
+  - repositorio:/repo
+  - site:/origens/site:ro
+  - cp4_dados:/origens/cp4:ro
+  - ./.runtime/nginx:/origens/nginx:ro
+  - ./.runtime/tls:/origens/tls:ro
+  - ./.runtime/segredos/restic.pw:/run/secrets/restic:ro
+  - restauros:/restauro
+
+x-restic-env: &restic-env
+  RESTIC_REPOSITORY: /repo
+  RESTIC_PASSWORD_FILE: /run/secrets/restic
+  RESTIC_CACHE_DIR: /tmp/restic-cache
+
+services:
+  cp4:
+    image: python:3.13-slim
+    command: [python, -m, http.server, "8000", --directory, /dados]
+    restart: unless-stopped
+    init: true
+    volumes:
+      - cp4_dados:/dados
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/dados.txt', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks: [lab]
+
+  web:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    depends_on:
+      cp4:
+        condition: service_healthy
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+      - "${BIND_IP:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+    volumes:
+      - site:/srv/site:ro
+      - ./.runtime/nginx:/etc/nginx/conf.d:ro
+      - ./.runtime/tls:/etc/nginx/tls:ro
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      lab:
+        aliases: [formador.lab.test]
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Executar lab-formador.sh preparar}
+    volumes:
+      - base_zabbix:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U zabbix -d zabbix"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [lab]
+
+  zabbix-db-init:
+    image: zabbix/zabbix-server-pgsql:${ZABBIX_TAG:-ubuntu-7.0-latest}
+    command: init_db_only
+    restart: "no"
+    init: true
+    environment: *db-env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [lab]
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:${ZABBIX_TAG:-ubuntu-7.0-latest}
+    restart: unless-stopped
+    init: true
+    environment:
+      <<: *db-env
+      ZBX_STARTHTTPPOLLERS: "2"
+      ZBX_STARTPOLLERS: "3"
+      ZBX_STARTAGENTPOLLERS: "1"
+      ZBX_CACHESIZE: 32M
+      ZBX_ENABLEGLOBALSCRIPTS: "0"
+    volumes:
+      - ./.runtime/ca:/var/lib/zabbix/ssl/ssl_ca:ro
+    tmpfs:
+      - /var/lib/zabbix/ssl/ssl_ca_internal:mode=770,uid=1997,gid=0
+    depends_on:
+      zabbix-db-init:
+        condition: service_completed_successfully
+    networks: [lab]
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:${ZABBIX_TAG:-ubuntu-7.0-latest}
+    restart: unless-stopped
+    environment:
+      <<: *db-env
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_NAME: Formador Docker
+      PHP_TZ: Europe/Lisbon
+    ports:
+      - "${BIND_IP:-127.0.0.1}:${ZABBIX_PORT:-8081}:8080"
+    depends_on:
+      zabbix-db-init:
+        condition: service_completed_successfully
+      zabbix-server:
+        condition: service_started
+    networks: [lab]
+
+  agent:
+    image: zabbix/zabbix-agent2:${ZABBIX_TAG:-ubuntu-7.0-latest}
+    restart: unless-stopped
+    init: true
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_PASSIVE_ALLOW: "true"
+      ZBX_ACTIVE_ALLOW: "false"
+      ZBX_HOSTNAME: docker-formador
+      ZBX_TLSACCEPT: psk
+      ZBX_TLSCONNECT: psk
+      ZBX_TLSPSKIDENTITY: FORMADOR-DOCKER
+      ZBX_TLSPSK: ${AGENT_PSK:?Executar lab-formador.sh preparar}
+    depends_on:
+      zabbix-server:
+        condition: service_started
+    networks: [lab]
+
+  restic:
+    image: restic/restic:0.18.1
+    profiles: [ferramentas]
+    entrypoint: [restic, --retry-lock, 1m]
+    environment: *restic-env
+    volumes: *restic-volumes
+    networks: [lab]
+
+  agendador:
+    image: restic/restic:0.18.1
+    restart: unless-stopped
+    entrypoint: [/bin/sh, /scripts/agendar.sh]
+    environment:
+      <<: *restic-env
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-1800}
+    volumes:
+      - repositorio:/repo
+      - site:/origens/site:ro
+      - cp4_dados:/origens/cp4:ro
+      - ./.runtime/nginx:/origens/nginx:ro
+      - ./.runtime/tls:/origens/tls:ro
+      - ./.runtime/segredos/restic.pw:/run/secrets/restic:ro
+      - ./agendar.sh:/scripts/agendar.sh:ro
+    networks: [lab]
+
+  ferramentas:
+    image: python:3.13-slim
+    profiles: [ferramentas]
+    entrypoint: [python, /scripts/controlar.py]
+    environment:
+      ZBX_API: http://zabbix-web:8080/api_jsonrpc.php
+      ZBX_ADMIN_PASSWORD: ${ZBX_ADMIN_PASSWORD:?Executar lab-formador.sh preparar}
+      AGENT_PSK: ${AGENT_PSK:?Executar lab-formador.sh preparar}
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./controlar.py:/scripts/controlar.py:ro
+      - site:/site
+      - cp4_dados:/dados
+      - estado:/estado
+      - restauros:/restauro:ro
+      - ./.runtime/nginx:/conf
+      - ./.runtime/ca:/ca:ro
+    networks: [lab]
+
+networks:
+  lab:
+
+volumes:
+  site:
+  cp4_dados:
+  base_zabbix:
+  repositorio:
+  restauros:
+  estado:

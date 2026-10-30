@@ -1,0 +1,22 @@
+server {
+    listen 80;
+    server_name formador.lab.test localhost;
+    location = /healthz { return 200 "OK\n"; }
+    location / { return 301 https://$host:__HTTPS_PORT__$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    server_name formador.lab.test localhost;
+    ssl_certificate /etc/nginx/tls/site.crt;
+    ssl_certificate_key /etc/nginx/tls/site.key;
+    root /srv/site;
+    index index.html;
+    access_log /dev/stdout;
+    error_log /dev/stderr notice;
+
+    location /app/ {
+        proxy_pass http://cp4:8000/;
+        proxy_set_header Host $host;
+    }
+}
