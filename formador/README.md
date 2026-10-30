@@ -14,6 +14,7 @@ Esta pasta reúne a resolução da sessão prática M4–M8, incluindo a prepara
 | [Ambiente comum](../AMBIENTE_COMUM.md) | Mesmos nomes, pastas e comandos para formador e formandos |
 | [Preparar posto](../preparar-posto.sh) | Preparação comum de CP4, Nginx, Restic, Agent 2, parâmetros e modelos |
 | [proxmox/](proxmox/) | Criar ou alinhar a VM Ubuntu 26.04 com o ambiente dos formandos |
+| [preparar-vm-direto.sh](preparar-vm-direto.sh) | Preparar a VM Ubuntu diretamente por SSH, sem depender do agente QEMU |
 | [docker-lab/](docker-lab/) | Stack anterior, conservada para recuperação dos dados existentes |
 | [.gitignore](.gitignore) | Evita adicionar por engano parâmetros privados, chaves e evidências nesta pasta |
 
@@ -32,6 +33,35 @@ Usa o [script do Proxmox](proxmox/README.md) para criar a VM ou `alinhar` para a
 Não coloques no repositório os valores das PSK, palavras-passe, chaves privadas, ficheiros de parâmetros preenchidos ou evidências com dados do laboratório. Os exemplos usam variáveis para os parâmetros de execução.
 
 ## Onde executar
+
+### Preparar diretamente a VM do formador
+
+Na sessão PuTTY em que aparece **`ubuntu@formador-docker`**, descarrega e executa:
+
+```bash
+cd "$HOME"
+curl -fL --retry 3 \
+  https://raw.githubusercontent.com/Skullclamp/adm-srv/main/formador/preparar-vm-direto.sh \
+  -o preparar-vm-direto.sh &&
+sudo bash preparar-vm-direto.sh
+```
+
+O script pede o IP ou nome do Proxmox, o mesmo endereço usado no PuTTY, e abre uma ligação SSH como `root`. A autenticação é a normal do SSH; a palavra-passe não é guardada pelo script. No Proxmox, lê apenas o IP do Zabbix em `/root/laboratorio/lab.conf` e o certificado público em `/root/laboratorio/segredos/ca-lab.crt`.
+
+Reutiliza Docker e Compose quando já funcionam, instala os restantes pré-requisitos, atualiza o material e executa a preparação comum. O disco de backup deve estar montado em `/srv/backup` ou ter o serial `lab-backup-NUMERO`; só inicializa um disco vazio com o serial identificado. Conserva os volumes antigos e o trabalho da CP4. Mantém o PuTTY aberto até aparecer **Preparação concluída**.
+
+Depois, na mesma shell Ubuntu:
+
+```bash
+source "$HOME/parametros-posto.sh" &&
+validar_parametros
+```
+
+Os parâmetros ficam gerados em `/home/ubuntu/parametros-posto.sh`. Segue depois T0–T17; o script prepara a base dos exercícios. O progresso e os erros ficam em `/var/log/adm-srv-formador.log`. O agente QEMU não é usado nesta execução.
+
+As opções estão em `sudo bash preparar-vm-direto.sh --help`. Com `--ip-zabbix IP --ca-cert FICHEIRO`, usa os parâmetros já distribuídos e dispensa a ligação ao Proxmox. Nos postos dos formandos que já têm Docker e Compose, o [preparar-posto.sh](../preparar-posto.sh) continua disponível para a preparação comum.
+
+### Contextos dos exercícios
 
 | Indicação no guia | Máquina / interface |
 |---|---|

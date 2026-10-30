@@ -23,14 +23,15 @@ Foi revisto o percurso comum do formador e dos formandos: preparação CP4, tare
 
 ## Validação executada
 
-- **43 testes:** 42 passaram e um teste de permissões POSIX foi omitido por o ambiente de validação ser Windows.
-- Sintaxe de **125 blocos Bash** da documentação e **cinco scripts Bash**, incluindo o bootstrap gerado para a VM.
+- **53 testes:** 52 passaram e um teste de permissões POSIX foi omitido por o ambiente de validação ser Windows.
+- Sintaxe de **127 blocos Bash** da documentação e **seis scripts Bash**, incluindo o bootstrap gerado para a VM.
 - Compilação dos ficheiros Python e validação dos **dois modelos Compose** segundo o esquema oficial do Compose.
 - Ligações relativas entre os documentos e igualdade entre o YAML CP4 do guia e o ficheiro instalado.
 - Execução em Bash dos casos de parâmetros em falta/inválidos, seleção dos workers nativos e recusa de ativar a firewall depois de uma regra falhar.
 - Migração com dados binários, subpastas, conflito, repetição depois de alterações na aula e mudança da identidade do volume.
 - APIs Proxmox simuladas, geração cloud-init e arranque completo pelos dois supervisores de bloqueio; o teste reproduz também a regressão de reentrada da versão anterior.
 - Testes de conservação/restauro da stack Docker anterior, mantida para recuperação.
+- Dez testes da preparação direta na VM: despacho do bloqueio, endereços SSH, exportação apenas de configuração pública, recusa de chaves privadas, seleção do disco, uso do ponto de montagem existente e reutilização de Docker/Compose. SSH, discos e serviços são simulados; não foi efetuada uma ligação à infraestrutura.
 
 Os testes estão em `tests/`, `formador/proxmox/tests/` e `formador/docker-lab/tests/`. Os testes Bash usam a variável opcional `BASH_FOR_TESTS` quando o executável não se chama `bash` no sistema de validação.
 

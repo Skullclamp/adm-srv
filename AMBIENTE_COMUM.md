@@ -49,6 +49,8 @@ Os postos já preparados segundo o enunciado podem continuar a trabalhar. Não p
 
 ## Adaptar a VM antiga do formador
 
+Também podes executar a preparação diretamente dentro da VM Ubuntu, sem usar o agente QEMU: segue o [script direto e as instruções](formador/README.md#preparar-diretamente-a-vm-do-formador). Esse modo reutiliza Docker/Compose existentes e obtém a configuração da sala por SSH normal, ou recebe os parâmetros explicitamente.
+
 No **Proxmox**, atualiza o script e executa `alinhar`:
 
 ```bash
