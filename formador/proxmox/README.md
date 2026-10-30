@@ -105,6 +105,8 @@ Segue o [guia Docker](../docker-lab/README.md#2-aceder-pelo-windows) para import
 
 ## 5. Diagnosticar e retomar
 
+Se uma versão anterior terminar com `O VMID ... não corresponde à VM registada` logo após criar a VM, volta a descarregar o script pelo comando do ponto 1 e repete `criar`. A versão corrigida lê o marcador pela API JSON: a saída textual de `qm config` codifica a descrição e causava uma comparação incorreta. O estado privado existente permite retomar a mesma VM. A comparação continua a exigir o marcador exato e recusa outra VM ou um template.
+
 Se houver uma falha de Internet ou de instalação, a VM, discos e dados ficam conservados. No Proxmox:
 
 ```bash

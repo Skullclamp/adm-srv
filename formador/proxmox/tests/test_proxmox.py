@@ -47,6 +47,7 @@ class ProxmoxTests(unittest.TestCase):
     def test_other_vm_with_same_id_is_never_adopted(self):
         result = self.shell('''
 qm() { printf 'description: outro-laboratorio\n'; }
+pvesh() { printf '{"description":"outro-laboratorio"}\n'; }
 verificar_identidade
 printf 'PODE_ALTERAR_VM\n'
 ''')
@@ -54,9 +55,13 @@ printf 'PODE_ALTERAR_VM\n'
         self.assertNotIn('PODE_ALTERAR_VM', result.stdout)
         self.assertIn('não corresponde', result.stderr)
 
-    def test_owned_vm_is_recognized(self):
+    def test_owned_vm_is_recognized_even_if_qm_encodes_description(self):
         result = self.shell('''
-qm() { printf 'description: adm-srv-formador:%s\n' "$TOKEN"; }
+qm() { printf 'description: adm-srv-formador%%3A%s\n' "$TOKEN"; }
+pvesh() {
+    [[ "$*" == 'get /nodes/pve-teste/qemu/601/config --current 1 --output-format json' ]] || return 1
+    printf '{"description":"adm-srv-formador:%s"}\n' "$TOKEN"
+}
 verificar_identidade
 printf 'IDENTIDADE_OK\n'
 ''')
@@ -66,11 +71,29 @@ printf 'IDENTIDADE_OK\n'
     def test_template_is_rejected_even_with_matching_marker(self):
         result = self.shell('''
 qm() { printf 'description: adm-srv-formador:%s\ntemplate: 1\n' "$TOKEN"; }
+pvesh() { printf '{"description":"adm-srv-formador:%s","template":1}\n' "$TOKEN"; }
 verificar_identidade
 printf 'PODE_ALTERAR_VM\n'
 ''')
         self.assertNotEqual(result.returncode, 0)
         self.assertNotIn('PODE_ALTERAR_VM', result.stdout)
+
+    def test_encoded_literal_in_api_is_not_accepted_as_matching_marker(self):
+        result = self.shell('''
+pvesh() { printf '{"description":"adm-srv-formador%%3A%s"}\n' "$TOKEN"; }
+verificar_identidade
+printf 'PODE_ALTERAR_VM\n'
+''')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn('PODE_ALTERAR_VM', result.stdout)
+
+    def test_invalid_or_missing_api_description_cannot_pass_identity(self):
+        for value in ('nao-e-json', '{}', '[]', '{"description":"adm-srv-formador:outro-token"}'):
+            with self.subTest(value=value):
+                result = self.shell('pvesh() { printf %s ' + shlex.quote(value)
+                                    + '; }; verificar_identidade; printf PODE_ALTERAR_VM')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('PODE_ALTERAR_VM', result.stdout)
 
     def test_occupied_id_stops_before_create(self):
         result = self.shell('''

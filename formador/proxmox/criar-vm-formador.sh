@@ -153,11 +153,21 @@ PY_VALIDAR
 
 verificar_identidade() {
     local config
-    config=$(qm config "$VMID") || erro "A VM $VMID não está disponível neste nó; o estado foi conservado."
     [[ "$TOKEN" =~ ^[0-9a-f]{32}$ ]] || erro 'Marcador privado inválido.'
-    grep -Fxq "description: adm-srv-formador:$TOKEN" <<< "$config" \
-        || erro "O VMID $VMID não corresponde à VM registada. Não foi alterado."
-    ! grep -Eq '^template: 1$' <<< "$config" || erro 'O VMID é um template; recusar a alteração.'
+    # qm config codifica a descrição na saída textual. A API JSON preserva o valor.
+    config=$(pvesh get "/nodes/$NODE/qemu/$VMID/config" --current 1 --output-format json) \
+        || erro "A VM $VMID não está disponível neste nó; o estado foi conservado."
+    printf '%s' "$config" | python3 -c '
+import json, sys
+token, vmid = sys.argv[1:]
+try:
+    config = json.load(sys.stdin)
+except (ValueError, TypeError):
+    raise SystemExit("ERRO: A API não devolveu uma configuração JSON válida. A VM não foi alterada.")
+if not isinstance(config, dict) or config.get("description") != "adm-srv-formador:" + token:
+    raise SystemExit(f"ERRO: O VMID {vmid} não corresponde à VM registada. Não foi alterado.")
+if str(config.get("template", 0)).lower() in ("1", "true"):
+    raise SystemExit("ERRO: O VMID é um template; recusar a alteração.")' "$TOKEN" "$VMID"
 }
 
 escolher_vmid() {
